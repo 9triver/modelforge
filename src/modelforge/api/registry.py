@@ -6,11 +6,15 @@ from fastapi.responses import FileResponse, PlainTextResponse
 
 from modelforge.enums import AssetStatus
 from modelforge.schemas.registry import (
+    ArtifactTextSave,
+    DraftVersionRequest,
+    ForkRequest,
     ModelAssetCreate,
     ModelAssetResponse,
     ModelAssetUpdate,
     ModelVersionCreate,
     ModelVersionResponse,
+    PipelineRunRequest,
     PipelineUpdate,
     StageTransition,
     StatusTransition,
@@ -106,6 +110,24 @@ def create_version(
     return ModelVersionResponse.model_validate(result)
 
 
+@router.post(
+    "/{model_id}/versions/draft",
+    response_model=ModelVersionResponse,
+    status_code=201,
+)
+def create_draft_version(
+    model_id: str,
+    body: DraftVersionRequest,
+    store: ModelStore = Depends(get_store),
+):
+    result = store.create_draft_version(
+        model_id,
+        body.base_version,
+        description=body.description,
+    )
+    return ModelVersionResponse.model_validate(result)
+
+
 @router.get("/{model_id}/versions", response_model=list[ModelVersionResponse])
 def list_versions(model_id: str, store: ModelStore = Depends(get_store)):
     versions = store.list_versions(model_id)
@@ -174,6 +196,45 @@ def preview_dataset(
     return store.preview_dataset(model_id, version_id, filename, offset, limit)
 
 
+@router.post("/{model_id}/versions/{version_id}/artifacts/{category}")
+def upload_artifact(
+    model_id: str,
+    version_id: str,
+    category: str,
+    file: UploadFile = File(...),
+    store: ModelStore = Depends(get_store),
+):
+    return store.upload_version_artifact(model_id, version_id, category, file)
+
+
+@router.put("/{model_id}/versions/{version_id}/artifacts/{category}/{filename}")
+def save_artifact_text(
+    model_id: str,
+    version_id: str,
+    category: str,
+    filename: str,
+    body: ArtifactTextSave,
+    store: ModelStore = Depends(get_store),
+):
+    return store.save_version_artifact_text(
+        model_id, version_id, category, filename, body.content,
+    )
+
+
+@router.delete(
+    "/{model_id}/versions/{version_id}/artifacts/{category}/{filename}",
+    status_code=204,
+)
+def delete_artifact(
+    model_id: str,
+    version_id: str,
+    category: str,
+    filename: str,
+    store: ModelStore = Depends(get_store),
+):
+    store.delete_version_artifact(model_id, version_id, category, filename)
+
+
 # ── Pipeline Definition ──
 
 
@@ -208,3 +269,56 @@ def delete_pipeline(
     model_id: str, store: ModelStore = Depends(get_store)
 ):
     store.delete_pipeline(model_id)
+
+
+# ── Pipeline Runs ──
+
+
+@router.post("/{model_id}/pipeline/run", status_code=201)
+def start_pipeline_run(
+    model_id: str,
+    body: PipelineRunRequest,
+    store: ModelStore = Depends(get_store),
+):
+    from modelforge.runner import get_runner
+
+    runner = get_runner(store)
+    run = runner.start_run(
+        model_id, body.base_version,
+        overrides=body.overrides,
+        draft_version=body.draft_version,
+    )
+    return run
+
+
+@router.get("/{model_id}/pipeline/runs")
+def list_pipeline_runs(
+    model_id: str, store: ModelStore = Depends(get_store)
+):
+    return store.list_runs(model_id)
+
+
+@router.get("/{model_id}/pipeline/runs/{run_id}")
+def get_pipeline_run(
+    model_id: str, run_id: str, store: ModelStore = Depends(get_store)
+):
+    return store.get_run(model_id, run_id)
+
+
+# ── Fork ──
+
+
+@router.post("/{model_id}/fork", status_code=201)
+def fork_model(
+    model_id: str,
+    body: ForkRequest,
+    store: ModelStore = Depends(get_store),
+):
+    result = store.fork_model(
+        source_model_id=model_id,
+        source_version_id=body.source_version_id,
+        new_name=body.new_name,
+        new_owner_org=body.new_owner_org,
+        description=body.description,
+    )
+    return result

@@ -74,3 +74,27 @@ def predict(
         latency_ms=round(latency_ms, 3),
         timestamp=datetime.now(timezone.utc),
     )
+
+
+predict_router = APIRouter(prefix="/predict", tags=["Predict"])
+
+
+@predict_router.post("/{deploy_name}", response_model=PredictionResponse)
+def predict_by_name(
+    deploy_name: str,
+    request: PredictionRequest,
+    store: ModelStore = Depends(get_store),
+):
+    """Predict using deployment name (user-friendly endpoint)."""
+    deployment = store.get_deployment_by_name(deploy_name)
+    deployment_id = deployment["id"]
+    result, latency_ms = store.predict(deployment_id, request.input_data, inference_manager)
+    log = store.log_prediction(deployment_id, request.input_data, result, latency_ms)
+
+    return PredictionResponse(
+        deployment_id=deployment_id,
+        prediction_id=log["id"],
+        output=result,
+        latency_ms=round(latency_ms, 3),
+        timestamp=datetime.now(timezone.utc),
+    )

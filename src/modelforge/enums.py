@@ -17,6 +17,7 @@ ASSET_STATUS_TRANSITIONS = {
 
 
 class VersionStage(str, enum.Enum):
+    DRAFT = "draft"
     DEVELOPMENT = "development"
     STAGING = "staging"
     PRODUCTION = "production"
@@ -24,6 +25,7 @@ class VersionStage(str, enum.Enum):
 
 
 VERSION_STAGE_TRANSITIONS = {
+    VersionStage.DRAFT: {VersionStage.DEVELOPMENT, VersionStage.ARCHIVED},
     VersionStage.DEVELOPMENT: {VersionStage.STAGING, VersionStage.ARCHIVED},
     VersionStage.STAGING: {
         VersionStage.PRODUCTION, VersionStage.DEVELOPMENT, VersionStage.ARCHIVED,

@@ -143,6 +143,33 @@ def test_list_deployments(client, model_file):
     assert len(resp.json()) == 2
 
 
+def test_predict_by_name(client, model_file):
+    _, version_id = _setup_model_and_version(client, model_file)
+
+    deploy = client.post(
+        f"{PREFIX}/deployments",
+        json={"name": "load-forecast-prod", "model_version_id": version_id},
+    ).json()
+    client.post(f"{PREFIX}/deployments/{deploy['id']}/start")
+
+    resp = client.post(
+        f"{PREFIX}/predict/load-forecast-prod",
+        json={"input_data": [[1, 2], [3, 4]]},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["output"]) == 2
+    assert abs(data["output"][0] - 3.0) < 0.1
+
+
+def test_predict_by_name_not_found(client):
+    resp = client.post(
+        f"{PREFIX}/predict/nonexistent",
+        json={"input_data": [[1, 2]]},
+    )
+    assert resp.status_code == 404
+
+
 def test_delete_deployment(client, model_file):
     _, version_id = _setup_model_and_version(client, model_file)
 

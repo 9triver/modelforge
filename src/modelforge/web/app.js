@@ -37,6 +37,8 @@ function formatBytes(bytes) {
   return (bytes / 1048576).toFixed(1) + ' MB';
 }
 
+function fmtVer(ver) { return 'v' + String(ver).replace(/^v/, ''); }
+
 function truncJson(obj, maxLen = 60) {
   const s = JSON.stringify(obj);
   return s.length > maxLen ? s.slice(0, maxLen) + '...' : s;
@@ -333,8 +335,26 @@ function renderOverviewTab() {
           <div>更新时间: ${formatTime(m.updated_at)}</div>
         </div>
       </div>
+
+      ${currentModelVersions.length ? `
+      <div class="bg-white rounded-xl border p-5">
+        <h3 class="text-sm font-medium text-gray-700 mb-3">模型复用</h3>
+        <p class="text-xs text-gray-500 mb-3">将此模型的某个版本 Fork 到新的组织/模型中，用于本地化调优</p>
+        <button onclick="showForkDialog()"
+          class="px-4 py-2 text-sm rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100">
+          \u2442 Fork 到新模型
+        </button>
+      </div>
+      ` : ''}
     </div>
   `;
+}
+
+// ── Lineage helpers ──
+
+function findParentVersionStr(parentId) {
+  const pv = (currentModelVersions || []).find(v => v.id === parentId);
+  return pv ? fmtVer(pv.version) : '外部版本';
 }
 
 // ── Sub-tab: Versions ──
@@ -367,7 +387,10 @@ function renderVersionsTab() {
   el.innerHTML = `
     <div class="flex items-center justify-between mb-4">
       <h3 class="text-sm font-medium text-gray-700">模型版本 (${versions.length})</h3>
-      <button onclick="document.getElementById('upload-asset-id').value='${currentModelId}';showModal('upload-version')" class="px-3 py-1.5 bg-brand-600 text-white text-xs rounded-lg hover:bg-brand-700">+ 上传版本</button>
+      <div class="flex gap-2">
+        <button onclick="showCreateDraftDialog()" class="px-3 py-1.5 bg-amber-500 text-white text-xs rounded-lg hover:bg-amber-600">+ 准备新版本</button>
+        <button onclick="document.getElementById('upload-asset-id').value='${currentModelId}';showModal('upload-version')" class="px-3 py-1.5 bg-brand-600 text-white text-xs rounded-lg hover:bg-brand-700">+ 上传版本</button>
+      </div>
     </div>
     ${versions.length ? `<div class="space-y-3">${versions.map(v => {
       const isExpanded = expandedVersionId === v.id;
@@ -379,10 +402,12 @@ function renderVersionsTab() {
               <svg class="w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
               </svg>
-              <span class="font-mono text-sm font-semibold">v${v.version}</span>
+              <span class="font-mono text-sm font-semibold">${fmtVer(v.version)}</span>
               ${badge(v.stage)}
-              <span class="text-xs text-gray-400">${formatBytes(v.file_size_bytes)}</span>
-              <span class="text-xs text-gray-400">${v.file_format}</span>
+              ${v.parent_version_id ? `<span class="text-xs text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">\u2190 ${findParentVersionStr(v.parent_version_id)}</span>` : ''}
+              ${v.source_model_id ? '<span class="text-xs text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">\u2442 Fork</span>' : ''}
+              <span class="text-xs text-gray-400">${v.stage === 'draft' ? '待训练' : formatBytes(v.file_size_bytes)}</span>
+              <span class="text-xs text-gray-400">${v.stage === 'draft' ? '' : v.file_format}</span>
             </div>
             <span class="text-xs text-gray-400">${formatTime(v.created_at)}</span>
           </div>
@@ -499,6 +524,26 @@ function renderStageContent(container, stageKey, data, versionId) {
   // Output stage: show model weights + metrics
   if (stageKey === 'output') {
     const v = data.version;
+
+    // Draft version: show training prompt instead of weights
+    if (v.stage === 'draft') {
+      container.innerHTML = `
+        <div class="text-center py-8">
+          <div class="text-amber-400 text-4xl mb-3">&#9881;</div>
+          <h4 class="text-sm font-medium text-gray-700 mb-2">草稿版本 — 尚未训练</h4>
+          <p class="text-xs text-gray-500 mb-4">请在前两个阶段准备好数据和训练配置，然后点击下方按钮开始训练</p>
+          <button onclick="startDraftTraining('${v.version}')"
+            class="px-6 py-2.5 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 font-medium">
+            开始训练
+          </button>
+          <button onclick="archiveDraft('${v.id}')"
+            class="ml-3 px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg border border-red-200">
+            废弃草稿
+          </button>
+        </div>`;
+      return;
+    }
+
     container.innerHTML = `
       <div class="space-y-4">
         <div class="bg-gray-50 rounded-lg p-4">
@@ -532,29 +577,59 @@ function renderStageContent(container, stageKey, data, versionId) {
   const allEmpty = stage.categories.every(cat => !data[cat] || !data[cat].length);
 
   if (allEmpty) {
-    container.innerHTML = '<div class="text-xs text-gray-400 py-8 text-center">暂无文件</div>';
+    container.innerHTML = `
+      <div class="space-y-3">
+        ${stage.categories.map(cat => `
+          <div class="flex items-center justify-between py-2">
+            <span class="text-xs text-gray-500">${stage.categoryLabels[cat]}</span>
+            <button onclick="showUploadArtifact('${versionId}','${cat}')"
+              class="px-2 py-1 text-xs text-brand-600 hover:bg-brand-50 rounded border border-brand-200">+ 上传文件</button>
+          </div>
+        `).join('')}
+      </div>`;
     return;
   }
+
+  const isTextFile = name => /\.(py|yaml|yml|txt|json|md|cfg|ini|toml)$/.test(name);
 
   container.innerHTML = `
     <div class="space-y-4">
       ${stage.categories.map(cat => {
         const files = data[cat] || [];
-        if (!files.length) return '';
         const csvFiles = files.filter(f => f.name.endsWith('.csv'));
         return `
           <div>
-            <h4 class="text-xs font-semibold text-gray-600 mb-2">${stage.categoryLabels[cat]} <span class="text-gray-400 font-normal">(${files.length})</span></h4>
-            <div class="flex flex-wrap gap-2">
-              ${files.map(f => `
-                <button onclick="viewArtifact('${versionId}','${cat}','${f.name}')"
-                  class="artifact-btn px-3 py-1.5 text-xs rounded-lg border hover:bg-gray-50 flex items-center gap-1.5">
-                  <span class="${fileIcon(f.name)}">${fileIconChar(f.name)}</span>
-                  <span>${f.name}</span>
-                  <span class="text-gray-400">${formatBytes(f.size)}</span>
-                </button>
-              `).join('')}
+            <div class="flex items-center justify-between mb-2">
+              <h4 class="text-xs font-semibold text-gray-600">${stage.categoryLabels[cat]} <span class="text-gray-400 font-normal">(${files.length})</span></h4>
+              <button onclick="showUploadArtifact('${versionId}','${cat}')"
+                class="px-2 py-1 text-xs text-brand-600 hover:bg-brand-50 rounded border border-brand-200">+ 上传文件</button>
             </div>
+            ${files.length ? `<div class="flex flex-wrap gap-2">
+              ${files.map(f => `
+                <div class="flex items-center gap-0.5">
+                  <button onclick="viewArtifact('${versionId}','${cat}','${f.name}')"
+                    class="artifact-btn px-3 py-1.5 text-xs rounded-lg border hover:bg-gray-50 flex items-center gap-1.5">
+                    <span class="${fileIcon(f.name)}">${fileIconChar(f.name)}</span>
+                    <span>${f.name}</span>
+                    <span class="text-gray-400">${formatBytes(f.size)}</span>
+                  </button>
+                  ${isTextFile(f.name) ? `<button onclick="editArtifact('${versionId}','${cat}','${f.name}')"
+                    class="p-1 text-gray-400 hover:text-blue-600" title="编辑">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                    </svg>
+                  </button>` : ''}
+                  <button onclick="deleteArtifact('${versionId}','${cat}','${f.name}')"
+                    class="p-1 text-gray-400 hover:text-red-600" title="删除">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                    </svg>
+                  </button>
+                </div>
+              `).join('')}
+            </div>` : '<div class="text-xs text-gray-400 py-2">暂无文件</div>'}
             ${csvFiles.length ? `<div class="flex flex-wrap gap-2 mt-2">${csvFiles.map(f =>
               `<button onclick="previewDataset('${versionId}','${f.name}')"
                 class="px-3 py-1 text-xs bg-green-50 text-green-700 rounded-lg border border-green-200 hover:bg-green-100">
@@ -806,11 +881,18 @@ function renderPipelineView(el, content, data) {
     `;
   }).join('');
 
+  // Build version options for run dialog
+  const versionOptions = (currentModelVersions || [])
+    .filter(v => v.stage !== 'draft')
+    .map(v => `<option value="${v.version}">${fmtVer(v.version)}</option>`).join('');
+
   el.innerHTML = `
     <div class="space-y-6">
       <div class="flex items-center justify-between">
         <h3 class="text-sm font-medium text-gray-700">流水线定义</h3>
         <div class="flex gap-2">
+          <button onclick="showRunDialog()"
+            class="px-3 py-1.5 text-xs rounded-lg bg-green-600 text-white hover:bg-green-700">运行训练</button>
           <button onclick="pipelineEditMode=true;renderPipelineEditor(document.getElementById('subtab-content'),document.getElementById('pipeline-yaml-src').textContent)"
             class="px-3 py-1.5 text-xs rounded-lg border hover:bg-gray-50">编辑</button>
           <button onclick="deletePipeline()"
@@ -820,6 +902,50 @@ function renderPipelineView(el, content, data) {
       <div class="flex items-stretch gap-0 p-4 bg-gray-50 rounded-xl">
         ${stageCards}
       </div>
+
+      <!-- Run dialog (hidden by default) -->
+      <div id="run-dialog" class="hidden border rounded-lg p-4 bg-blue-50 border-blue-200">
+        <h4 class="text-sm font-medium text-gray-700 mb-3">启动训练运行</h4>
+        <div class="flex items-end gap-3 mb-3">
+          <div class="flex-1">
+            <label class="block text-xs text-gray-500 mb-1">基础版本（复制其数据和配置）</label>
+            <select id="run-base-version" class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
+              ${versionOptions}
+            </select>
+          </div>
+        </div>
+        <details class="mb-3">
+          <summary class="text-xs text-gray-500 cursor-pointer hover:text-gray-700">参数覆写（可选）</summary>
+          <div class="grid grid-cols-3 gap-2 mt-2">
+            <div>
+              <label class="block text-[10px] text-gray-400 mb-0.5">dataset</label>
+              <input id="run-override-dataset" type="text" placeholder="如 data_v2.csv"
+                class="w-full px-2 py-1.5 border rounded text-xs bg-white" />
+            </div>
+            <div>
+              <label class="block text-[10px] text-gray-400 mb-0.5">feature_config</label>
+              <input id="run-override-feature" type="text" placeholder="如 features_v2.yaml"
+                class="w-full px-2 py-1.5 border rounded text-xs bg-white" />
+            </div>
+            <div>
+              <label class="block text-[10px] text-gray-400 mb-0.5">params</label>
+              <input id="run-override-params" type="text" placeholder="如 hp_tuned.yaml"
+                class="w-full px-2 py-1.5 border rounded text-xs bg-white" />
+            </div>
+          </div>
+        </details>
+        <div class="flex justify-end gap-2">
+          <button onclick="document.getElementById('run-dialog').classList.add('hidden')" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">取消</button>
+          <button onclick="startPipelineRun()" class="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700">开始运行</button>
+        </div>
+      </div>
+
+      <!-- Active run panel -->
+      <div id="run-active-panel"></div>
+
+      <!-- Run history -->
+      <div id="run-history"></div>
+
       <div class="rounded-lg overflow-hidden border">
         <div class="bg-gray-100 px-3 py-1.5 text-xs text-gray-500 border-b">pipeline.yaml</div>
         <pre class="!m-0 !rounded-none"><code class="language-yaml">${escapeHtml(content)}</code></pre>
@@ -828,6 +954,9 @@ function renderPipelineView(el, content, data) {
     </div>
   `;
   el.querySelectorAll('pre code').forEach(block => hljs.highlightElement(block));
+
+  // Load run history
+  loadRunHistory();
 }
 
 function renderPipelineEditor(el, content) {
@@ -880,6 +1009,488 @@ async function deletePipeline() {
   }
 }
 
+// ── Pipeline Run Execution ──
+
+let activeRunId = null;
+let runPollTimer = null;
+
+function showRunDialog() {
+  const dialog = document.getElementById('run-dialog');
+  if (dialog) dialog.classList.remove('hidden');
+}
+
+async function startPipelineRun() {
+  const sel = document.getElementById('run-base-version');
+  if (!sel || !sel.value) { showToast('请选择基础版本', 'error'); return; }
+
+  const baseVersion = sel.value;
+  document.getElementById('run-dialog').classList.add('hidden');
+
+  // Collect overrides
+  const overrides = {};
+  const ds = (document.getElementById('run-override-dataset') || {}).value;
+  const fc = (document.getElementById('run-override-feature') || {}).value;
+  const pr = (document.getElementById('run-override-params') || {}).value;
+  if (ds && ds.trim()) overrides.dataset = ds.trim();
+  if (fc && fc.trim()) overrides.feature_config = fc.trim();
+  if (pr && pr.trim()) overrides.params = pr.trim();
+
+  const body = { base_version: baseVersion };
+  if (Object.keys(overrides).length) body.overrides = overrides;
+
+  try {
+    const run = await api(`/models/${currentModelId}/pipeline/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    activeRunId = run.id;
+    showToast('训练运行已启动');
+    renderRunActivePanel(run);
+    startRunPolling();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+function renderRunActivePanel(run) {
+  const panel = document.getElementById('run-active-panel');
+  if (!panel) return;
+
+  const statusColors = {
+    pending: 'bg-yellow-100 text-yellow-700 border-yellow-300',
+    running: 'bg-blue-100 text-blue-700 border-blue-300',
+    success: 'bg-green-100 text-green-700 border-green-300',
+    failed: 'bg-red-100 text-red-700 border-red-300',
+  };
+  const statusLabels = { pending: '准备中', running: '运行中', success: '已完成', failed: '失败' };
+  const sc = statusColors[run.status] || statusColors.pending;
+  const sl = statusLabels[run.status] || run.status;
+
+  const logHtml = run.log
+    ? `<pre class="mt-3 p-3 bg-gray-900 text-green-400 text-[11px] font-mono rounded-lg max-h-64 overflow-y-auto whitespace-pre-wrap">${escapeHtml(run.log)}</pre>`
+    : '<div class="mt-3 text-xs text-gray-400 italic">等待日志输出...</div>';
+
+  const metricsHtml = run.metrics
+    ? `<div class="mt-3 grid grid-cols-3 gap-2">${Object.entries(run.metrics).map(([k, v]) =>
+        `<div class="text-center p-2 bg-white rounded border"><div class="text-[10px] text-gray-400">${k}</div><div class="text-sm font-semibold text-gray-700">${typeof v === 'number' ? v.toFixed(4) : v}</div></div>`
+      ).join('')}</div>`
+    : '';
+
+  const resultHtml = run.result_version
+    ? `<div class="mt-2 text-xs text-green-700">新版本: <span class="font-semibold">${run.result_version}</span></div>`
+    : '';
+
+  panel.innerHTML = `
+    <div class="border rounded-lg p-4 ${sc}">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-medium">${sl}</span>
+          ${run.status === 'running' ? '<span class="inline-block w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>' : ''}
+        </div>
+        <div class="text-[10px] text-gray-500">
+          ${run.base_version} → ${run.target_version || '...'}
+          ${run.finished_at ? ' | ' + formatTime(run.finished_at) : ''}
+        </div>
+      </div>
+      ${resultHtml}
+      ${metricsHtml}
+      ${logHtml}
+    </div>
+  `;
+
+  // Auto-scroll log
+  const logEl = panel.querySelector('pre');
+  if (logEl) logEl.scrollTop = logEl.scrollHeight;
+}
+
+function startRunPolling() {
+  stopRunPolling();
+  runPollTimer = setInterval(pollRunStatus, 2000);
+}
+
+function stopRunPolling() {
+  if (runPollTimer) { clearInterval(runPollTimer); runPollTimer = null; }
+}
+
+async function pollRunStatus() {
+  if (!activeRunId || !currentModelId) { stopRunPolling(); return; }
+  try {
+    const run = await api(`/models/${currentModelId}/pipeline/runs/${activeRunId}`);
+    renderRunActivePanel(run);
+    if (run.status === 'success' || run.status === 'failed') {
+      stopRunPolling();
+      activeRunId = null;
+      loadRunHistory();
+      if (run.status === 'success') {
+        // Refresh version list
+        currentModelVersions = await api(`/models/${currentModelId}/versions`);
+      }
+    }
+  } catch (e) {
+    stopRunPolling();
+  }
+}
+
+async function loadRunHistory() {
+  const el = document.getElementById('run-history');
+  if (!el) return;
+
+  try {
+    const runs = await api(`/models/${currentModelId}/pipeline/runs`);
+    if (!runs.length) { el.innerHTML = ''; return; }
+
+    const statusIcons = { pending: '&#9711;', running: '&#9881;', success: '&#10003;', failed: '&#10007;' };
+    const statusColors = { pending: 'text-yellow-500', running: 'text-blue-500', success: 'text-green-600', failed: 'text-red-500' };
+
+    el.innerHTML = `
+      <div class="border rounded-lg overflow-hidden">
+        <div class="bg-gray-50 px-3 py-2 text-xs font-medium text-gray-600 border-b">运行历史</div>
+        <div class="divide-y">
+          ${runs.map(r => `
+            <div class="px-3 py-2 flex items-center justify-between text-xs hover:bg-gray-50 cursor-pointer" onclick="viewRunDetail('${r.id}')">
+              <div class="flex items-center gap-2">
+                <span class="${statusColors[r.status] || 'text-gray-400'}">${statusIcons[r.status] || '?'}</span>
+                <span class="text-gray-700">${r.base_version} → ${r.target_version || '...'}</span>
+              </div>
+              <div class="flex items-center gap-3">
+                ${r.result_version ? `<span class="text-green-600 font-medium">${r.result_version}</span>` : ''}
+                <span class="text-gray-400">${formatTime(r.started_at)}</span>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    el.innerHTML = '';
+  }
+}
+
+async function viewRunDetail(runId) {
+  try {
+    const run = await api(`/models/${currentModelId}/pipeline/runs/${runId}`);
+    activeRunId = null;
+    renderRunActivePanel(run);
+    if (run.status === 'running' || run.status === 'pending') {
+      activeRunId = run.id;
+      startRunPolling();
+    }
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+// ── Fork ──
+
+function showForkDialog() {
+  const versions = currentModelVersions || [];
+  const vOpts = versions.map(v =>
+    `<option value="${v.id}">${fmtVer(v.version)}</option>`
+  ).join('');
+  const m = currentModelData;
+
+  const html = `
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" id="fork-overlay" onclick="if(event.target===this)this.remove()">
+      <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6" onclick="event.stopPropagation()">
+        <h3 class="text-base font-semibold text-gray-800 mb-4">\u2442 Fork 模型</h3>
+        <p class="text-xs text-gray-500 mb-4">从 <strong>${escapeHtml(m.name)}</strong> 的版本创建新模型</p>
+        <div class="space-y-3">
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">源版本</label>
+            <select id="fork-source-version" class="w-full px-3 py-2 border rounded-lg text-sm bg-white">${vOpts}</select>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">新模型名称</label>
+            <input id="fork-new-name" type="text" placeholder="如: 华南短期负荷预测模型-GBR-v1"
+              class="w-full px-3 py-2 border rounded-lg text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">所属单位</label>
+            <input id="fork-new-org" type="text" placeholder="如: 华南电网"
+              class="w-full px-3 py-2 border rounded-lg text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">描述（可选）</label>
+            <input id="fork-desc" type="text" placeholder="Fork 用途说明"
+              class="w-full px-3 py-2 border rounded-lg text-sm" />
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 mt-5">
+          <button onclick="document.getElementById('fork-overlay').remove()"
+            class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">取消</button>
+          <button onclick="forkModel()"
+            class="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700">确认 Fork</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function forkModel() {
+  const versionId = document.getElementById('fork-source-version').value;
+  const newName = document.getElementById('fork-new-name').value.trim();
+  const newOrg = document.getElementById('fork-new-org').value.trim();
+  const desc = document.getElementById('fork-desc').value.trim();
+
+  if (!newName) { showToast('请输入新模型名称', 'error'); return; }
+  if (!newOrg) { showToast('请输入所属单位', 'error'); return; }
+
+  try {
+    const result = await api(`/models/${currentModelId}/fork`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source_version_id: versionId,
+        new_name: newName,
+        new_owner_org: newOrg,
+        description: desc || undefined,
+      }),
+    });
+    document.getElementById('fork-overlay').remove();
+    showToast('Fork 成功！新模型已创建');
+    // Navigate to new model
+    openModelDetail(result.id);
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+// ── Artifact Management ──
+
+function invalidateArtifactCache(versionId) {
+  Object.keys(artifactTabCache).forEach(key => {
+    if (key.startsWith(versionId + ':')) delete artifactTabCache[key];
+  });
+}
+
+function reloadCurrentStage(versionId) {
+  if (expandedVersionId === versionId && activePipelineStage) {
+    loadPipelineStage(versionId, activePipelineStage);
+  }
+}
+
+// ── Draft Version Functions ──
+
+function showCreateDraftDialog() {
+  const versions = (currentModelVersions || []).filter(v => v.stage !== 'draft');
+  if (!versions.length) {
+    showToast('需要至少一个已有版本作为基础', 'error');
+    return;
+  }
+  const vOpts = versions.map(v =>
+    `<option value="${v.version}">${fmtVer(v.version)}</option>`
+  ).join('');
+  const html = `
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
+         id="draft-overlay" onclick="if(event.target===this)this.remove()">
+      <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6" onclick="event.stopPropagation()">
+        <h3 class="text-base font-semibold text-gray-800 mb-4">准备新版本（草稿）</h3>
+        <p class="text-xs text-gray-500 mb-4">从已有版本复制数据和配置，您可以在训练前修改各项文件</p>
+        <div class="space-y-3">
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">基础版本</label>
+            <select id="draft-base-version" class="w-full px-3 py-2 border rounded-lg text-sm bg-white">${vOpts}</select>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">说明（可选）</label>
+            <input id="draft-description" type="text" placeholder="如：调整特征后重新训练"
+              class="w-full px-3 py-2 border rounded-lg text-sm" />
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 mt-5">
+          <button onclick="document.getElementById('draft-overlay').remove()"
+            class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">取消</button>
+          <button onclick="createDraftVersion()"
+            class="px-4 py-2 bg-amber-500 text-white text-sm rounded-lg hover:bg-amber-600">创建草稿</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function createDraftVersion() {
+  const baseVersion = document.getElementById('draft-base-version').value;
+  const desc = (document.getElementById('draft-description') || {}).value || '';
+  try {
+    const result = await api(`/models/${currentModelId}/versions/draft`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ base_version: baseVersion, description: desc || undefined }),
+    });
+    document.getElementById('draft-overlay').remove();
+    showToast(`草稿版本 ${fmtVer(result.version)} 已创建`);
+    currentModelVersions = await api(`/models/${currentModelId}/versions`);
+    expandedVersionId = result.id;
+    activePipelineStage = 'data_prep';
+    artifactTabCache = {};
+    renderVersionsTab();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function startDraftTraining(draftVersion) {
+  try {
+    const pipeline = await api(`/models/${currentModelId}/pipeline`);
+    if (!pipeline.exists) {
+      showToast('请先在「流水线」标签页定义训练流水线', 'error');
+      return;
+    }
+  } catch (e) {
+    showToast('无法获取流水线定义: ' + e.message, 'error');
+    return;
+  }
+  if (!confirm(`确定开始训练草稿版本 ${fmtVer(draftVersion)}？`)) return;
+  try {
+    const run = await api(`/models/${currentModelId}/pipeline/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ base_version: draftVersion, draft_version: draftVersion }),
+    });
+    showToast('草稿版本训练已启动');
+    currentSubTab = 'pipeline';
+    activeRunId = run.id;
+    switchSubTab('pipeline');
+    startRunPolling();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function archiveDraft(versionId) {
+  if (!confirm('确定废弃此草稿版本？此操作不可撤销。')) return;
+  try {
+    await api(`/models/${currentModelId}/versions/${versionId}/stage`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_stage: 'archived' }),
+    });
+    showToast('草稿已废弃');
+    currentModelVersions = await api(`/models/${currentModelId}/versions`);
+    expandedVersionId = null;
+    renderVersionsTab();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+function showUploadArtifact(versionId, category) {
+  const categoryLabels = {
+    datasets: '数据集', features: '特征定义', code: '训练代码', params: '超参数'
+  };
+  const html = `
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
+         id="upload-artifact-overlay" onclick="if(event.target===this)this.remove()">
+      <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6" onclick="event.stopPropagation()">
+        <h3 class="text-base font-semibold text-gray-800 mb-4">上传文件到 ${categoryLabels[category] || category}</h3>
+        <form id="form-upload-artifact" onsubmit="uploadArtifact(event,'${versionId}','${category}')">
+          <input type="file" name="file" required
+            class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-brand-50 file:text-brand-700 hover:file:bg-brand-100 mb-4">
+          <p class="text-xs text-gray-400 mb-4">最大 50 MB。上传同名文件将覆盖原文件。</p>
+          <div class="flex justify-end gap-2">
+            <button type="button" onclick="document.getElementById('upload-artifact-overlay').remove()"
+              class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">取消</button>
+            <button type="submit"
+              class="px-4 py-2 bg-brand-600 text-white text-sm rounded-lg hover:bg-brand-700">上传</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function uploadArtifact(e, versionId, category) {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  try {
+    const res = await fetch(
+      API + `/models/${currentModelId}/versions/${versionId}/artifacts/${category}`,
+      { method: 'POST', body: fd }
+    );
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || JSON.stringify(err));
+    }
+    document.getElementById('upload-artifact-overlay').remove();
+    showToast('文件上传成功');
+    invalidateArtifactCache(versionId);
+    reloadCurrentStage(versionId);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function editArtifact(versionId, category, filename) {
+  try {
+    const res = await fetch(
+      API + `/models/${currentModelId}/versions/${versionId}/artifacts/${category}/${filename}`
+    );
+    if (!res.ok) throw new Error('Failed to load file');
+    const text = await res.text();
+
+    const html = `
+      <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
+           id="edit-artifact-overlay" onclick="if(event.target===this)this.remove()">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] flex flex-col"
+             onclick="event.stopPropagation()">
+          <div class="flex items-center justify-between px-6 py-4 border-b">
+            <h3 class="text-base font-semibold text-gray-800">编辑 ${escapeHtml(filename)}</h3>
+            <button onclick="document.getElementById('edit-artifact-overlay').remove()"
+              class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+          </div>
+          <div class="flex-1 p-4 overflow-hidden">
+            <textarea id="edit-artifact-content"
+              class="w-full h-full min-h-[300px] px-3 py-2 border rounded-lg text-sm font-mono resize-y"
+              spellcheck="false">${escapeHtml(text)}</textarea>
+          </div>
+          <div class="flex justify-end gap-2 px-6 py-4 border-t">
+            <button onclick="document.getElementById('edit-artifact-overlay').remove()"
+              class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">取消</button>
+            <button onclick="saveArtifact('${versionId}','${category}','${filename}')"
+              class="px-4 py-2 bg-brand-600 text-white text-sm rounded-lg hover:bg-brand-700">保存</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', html);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function saveArtifact(versionId, category, filename) {
+  const content = document.getElementById('edit-artifact-content').value;
+  try {
+    await api(`/models/${currentModelId}/versions/${versionId}/artifacts/${category}/${filename}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    document.getElementById('edit-artifact-overlay').remove();
+    showToast('文件已保存');
+    invalidateArtifactCache(versionId);
+    reloadCurrentStage(versionId);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function deleteArtifact(versionId, category, filename) {
+  if (!confirm('确定要删除 ' + filename + ' 吗？此操作不可撤销。')) return;
+  try {
+    const res = await fetch(
+      API + `/models/${currentModelId}/versions/${versionId}/artifacts/${category}/${filename}`,
+      { method: 'DELETE' }
+    );
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || JSON.stringify(err));
+    }
+    showToast('文件已删除');
+    invalidateArtifactCache(versionId);
+    reloadCurrentStage(versionId);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
 // ── Sub-tab: Deploy & Predict ──
 
 async function renderDeployTab() {
@@ -906,13 +1517,16 @@ async function renderDeployTab() {
           <h3 class="text-sm font-medium text-gray-700">部署列表 (${deploys.length})</h3>
           <button onclick="showCreateDeployForModel()" class="px-3 py-1.5 bg-brand-600 text-white text-xs rounded-lg hover:bg-brand-700">+ 新建部署</button>
         </div>
-        ${deploys.length ? deploys.map(d => `
+        ${deploys.length ? deploys.map(d => {
+          const endpointUrl = location.origin + API + '/predict/' + encodeURIComponent(d.name);
+          const endpointById = location.origin + API + '/deployments/' + d.id + '/predict';
+          return `
           <div class="bg-white rounded-xl border p-5">
             <div class="flex items-center justify-between mb-3">
               <div class="flex items-center gap-3">
                 <h4 class="font-medium text-sm">${d.name}</h4>
                 ${badge(d.status)}
-                <span class="text-xs text-gray-400">v${versionMap[d.model_version_id] || '?'}</span>
+                <span class="text-xs text-gray-400">${fmtVer(versionMap[d.model_version_id] || '?')}</span>
               </div>
               <div class="flex gap-2">
                 ${d.status === 'pending' || d.status === 'stopped' ? `<button onclick="deployAction('${d.id}','start')" class="px-3 py-1 bg-green-600 text-white text-xs rounded-lg hover:bg-green-700">启动</button>` : ''}
@@ -921,12 +1535,41 @@ async function renderDeployTab() {
                 <button onclick="deleteDeploy('${d.id}')" class="px-3 py-1 bg-gray-100 text-gray-600 text-xs rounded-lg hover:bg-gray-200">删除</button>
               </div>
             </div>
-            <div class="text-xs text-gray-400">
+            ${d.status === 'running' ? `
+            <div class="mt-3 bg-gray-50 rounded-lg p-4 border border-gray-200">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-medium text-gray-600">API 端点</span>
+                <button onclick="copyEndpoint('${endpointUrl}')" class="text-xs text-brand-600 hover:text-brand-700">复制 URL</button>
+              </div>
+              <code class="block text-xs text-gray-800 bg-white px-3 py-1.5 rounded border mb-3 break-all">${endpointUrl}</code>
+              <details class="group">
+                <summary class="text-xs text-gray-500 cursor-pointer hover:text-gray-700">调用示例</summary>
+                <div class="mt-2 space-y-2">
+                  <div>
+                    <div class="text-xs text-gray-400 mb-1">curl</div>
+                    <pre class="text-xs bg-gray-900 text-green-300 p-3 rounded-lg overflow-x-auto">curl -X POST ${endpointUrl} \\
+  -H "Content-Type: application/json" \\
+  -d '{"input_data": [[25.0, 60.0, 14, 1, 0, 7]]}'</pre>
+                  </div>
+                  <div>
+                    <div class="text-xs text-gray-400 mb-1">Python</div>
+                    <pre class="text-xs bg-gray-900 text-green-300 p-3 rounded-lg overflow-x-auto">import requests
+
+resp = requests.post(
+    "${endpointUrl}",
+    json={"input_data": [[25.0, 60.0, 14, 1, 0, 7]]}
+)
+print(resp.json())</pre>
+                  </div>
+                </div>
+              </details>
+            </div>` : ''}
+            <div class="text-xs text-gray-400 mt-3">
               创建: ${formatTime(d.created_at)}
               ${d.error_message ? `<span class="text-red-500 ml-2">${d.error_message}</span>` : ''}
             </div>
-          </div>
-        `).join('') : '<div class="text-sm text-gray-400 py-12 text-center bg-white rounded-xl border">暂无部署</div>'}
+          </div>`;
+        }).join('') : '<div class="text-sm text-gray-400 py-12 text-center bg-white rounded-xl border">暂无部署</div>'}
       </div>
     `;
   } catch (e) {
@@ -938,7 +1581,7 @@ function showCreateDeployForModel() {
   const versions = currentModelVersions;
   const sel = document.getElementById('deploy-version-select');
   sel.innerHTML = '<option value="">请选择...</option>' +
-    versions.map(v => `<option value="${v.id}">${currentModelData.name} / v${v.version} (${v.stage})</option>`).join('');
+    versions.map(v => `<option value="${v.id}">${currentModelData.name} / ${fmtVer(v.version)} (${v.stage})</option>`).join('');
   showModal('deploy-create');
 }
 
@@ -976,6 +1619,13 @@ async function deleteDeploy(id) {
     showToast('已删除');
     if (currentSubTab === 'deploy') renderDeployTab();
   } catch (e) { showToast(e.message, 'error'); }
+}
+
+function copyEndpoint(url) {
+  navigator.clipboard.writeText(url).then(
+    () => showToast('已复制到剪贴板'),
+    () => showToast('复制失败', 'error')
+  );
 }
 
 function openPredict(deployId) {
