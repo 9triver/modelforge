@@ -1,0 +1,12 @@
+__pycache__
+*.pyc
+*.egg-info
+.git
+.venv
+venv
+*.db
+model_store/
+.pytest_cache
+.ruff_cache
+examples/load_forecast/*.joblib
+examples/load_forecast/*.csv

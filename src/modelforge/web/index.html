@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ModelForge - 模型全网共享中心</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: { brand: { 50:'#eff6ff',100:'#dbeafe',500:'#3b82f6',600:'#2563eb',700:'#1d4ed8',800:'#1e40af' } }
+        }
+      }
+    }
+  </script>
+  <!-- Tabulator -->
+  <link rel="stylesheet" href="https://unpkg.com/tabulator-tables@6/dist/css/tabulator_simple.min.css">
+  <script src="https://unpkg.com/tabulator-tables@6/dist/js/tabulator.min.js"></script>
+  <!-- highlight.js -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/yaml.min.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .fade-in { animation: fadeIn .2s ease-in; }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+    .hljs { background: #f8fafc !important; border-radius: 0.5rem; padding: 1rem !important; font-size: 0.8125rem; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+<!-- Top Nav -->
+<nav class="bg-white border-b border-gray-200 sticky top-0 z-50">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="flex items-center justify-between h-14">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 bg-brand-600 rounded-lg flex items-center justify-center">
+          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+          </svg>
+        </div>
+        <span class="text-lg font-semibold text-gray-900">ModelForge</span>
+        <span class="text-xs text-gray-400 ml-1">v0.1.0</span>
+      </div>
+      <div class="flex-1"></div>
+      <div id="health-dot" class="flex items-center gap-2 text-xs text-gray-500">
+        <span class="w-2 h-2 rounded-full bg-gray-300"></span>
+        <span>connecting...</span>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+<!-- ==================== 模型中心 (列表) ==================== -->
+<section id="page-models" class="page hidden fade-in">
+  <div class="flex items-center justify-between mb-6">
+    <h1 class="text-xl font-semibold text-gray-900">模型中心</h1>
+    <button onclick="showModal('model-create')" class="px-4 py-2 bg-brand-600 text-white text-sm rounded-lg hover:bg-brand-700 transition">
+      + 注册模型
+    </button>
+  </div>
+  <div class="flex gap-3 mb-6">
+    <input id="model-search" type="text" placeholder="搜索模型名称或描述..." class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none" oninput="debounceLoadModels()">
+    <select id="model-filter-task" class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white" onchange="loadModels()">
+      <option value="">全部任务类型</option>
+      <option value="load_forecast">负荷预测</option>
+      <option value="anomaly_detection">异常检测</option>
+      <option value="equipment_diagnosis">设备诊断</option>
+    </select>
+    <select id="model-filter-status" class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white" onchange="loadModels()">
+      <option value="">全部状态</option>
+      <option value="draft">草稿</option>
+      <option value="registered">已注册</option>
+      <option value="shared">已共享</option>
+      <option value="archived">已归档</option>
+    </select>
+  </div>
+  <div id="model-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+</section>
+
+<!-- ==================== 模型详情 (全页面) ==================== -->
+<section id="page-model-detail" class="page hidden fade-in">
+  <!-- Breadcrumb -->
+  <div class="flex items-center gap-2 text-sm mb-4">
+    <button onclick="switchPage('models')" class="text-brand-600 hover:text-brand-800">模型中心</button>
+    <span class="text-gray-400">/</span>
+    <span id="detail-breadcrumb" class="text-gray-700 font-medium"></span>
+  </div>
+
+  <!-- Header -->
+  <div id="detail-header" class="mb-6"></div>
+
+  <!-- Sub-tabs -->
+  <div class="border-b border-gray-200 mb-6">
+    <div class="flex gap-0 -mb-px">
+      <button onclick="switchSubTab('overview')" id="subtab-overview" class="subtab-btn px-4 py-2.5 text-sm font-medium border-b-2">概览</button>
+      <button onclick="switchSubTab('versions')" id="subtab-versions" class="subtab-btn px-4 py-2.5 text-sm font-medium border-b-2">版本管理</button>
+      <button onclick="switchSubTab('pipeline')" id="subtab-pipeline" class="subtab-btn px-4 py-2.5 text-sm font-medium border-b-2">流水线</button>
+      <button onclick="switchSubTab('deploy')" id="subtab-deploy" class="subtab-btn px-4 py-2.5 text-sm font-medium border-b-2">部署与预测</button>
+      <button onclick="switchSubTab('monitor')" id="subtab-monitor" class="subtab-btn px-4 py-2.5 text-sm font-medium border-b-2">运行监控</button>
+    </div>
+  </div>
+
+  <!-- Sub-tab content -->
+  <div id="subtab-content" class="fade-in"></div>
+</section>
+
+<!-- ==================== Modals ==================== -->
+
+<!-- 创建模型 -->
+<div id="modal-model-create" class="hidden fixed inset-0 bg-black/50 z-50 flex items-start justify-center pt-12 overflow-y-auto">
+  <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 mb-12">
+    <div class="flex items-center justify-between px-6 py-4 border-b">
+      <h2 class="text-lg font-semibold">注册新模型</h2>
+      <button onclick="hideModal('model-create')" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+    </div>
+    <form id="form-create-model" class="p-6 space-y-4" onsubmit="createModel(event)">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">模型名称 *</label>
+        <input name="name" required class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="华东短期负荷预测模型">
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">任务类型 *</label>
+          <select name="task_type" required class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
+            <option value="load_forecast">负荷预测</option>
+            <option value="anomaly_detection">异常检测</option>
+            <option value="equipment_diagnosis">设备诊断</option>
+            <option value="other">其他</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">算法类型 *</label>
+          <input name="algorithm_type" required class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="GradientBoosting">
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">框架 *</label>
+          <select name="framework" required class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
+            <option value="sklearn">sklearn</option>
+            <option value="pytorch">PyTorch</option>
+            <option value="tensorflow">TensorFlow</option>
+            <option value="onnx">ONNX</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">所属单位 *</label>
+          <input name="owner_org" required class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="华东省公司">
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">模型描述</label>
+        <textarea name="description" rows="3" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="描述模型的用途、算法特点、适用场景..."></textarea>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">算法说明</label>
+        <textarea name="algorithm_description" rows="2" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="算法假设、已知局限、适用条件..."></textarea>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">标签 (逗号分隔)</label>
+        <input name="tags" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="load_forecast, short_term, gradient_boosting">
+      </div>
+      <div class="flex justify-end gap-3 pt-2">
+        <button type="button" onclick="hideModal('model-create')" class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg">取消</button>
+        <button type="submit" class="px-4 py-2 bg-brand-600 text-white text-sm rounded-lg hover:bg-brand-700">创建</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- 上传版本 -->
+<div id="modal-upload-version" class="hidden fixed inset-0 bg-black/50 z-50 flex items-start justify-center pt-20">
+  <div class="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4">
+    <div class="flex items-center justify-between px-6 py-4 border-b">
+      <h2 class="text-lg font-semibold">上传模型版本</h2>
+      <button onclick="hideModal('upload-version')" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+    </div>
+    <form id="form-upload-version" class="p-6 space-y-4" onsubmit="uploadVersion(event)">
+      <input type="hidden" name="asset_id" id="upload-asset-id">
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">版本号 *</label>
+          <input name="version" required class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="1.0.0">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">文件格式 *</label>
+          <select name="file_format" required class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
+            <option value="joblib">joblib</option>
+            <option value="pickle">pickle</option>
+            <option value="onnx">onnx</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">模型文件 *</label>
+        <input type="file" name="file" required class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-brand-50 file:text-brand-700 hover:file:bg-brand-100">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">版本说明</label>
+        <input name="description" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Initial training on 2024 data">
+      </div>
+      <div class="flex justify-end gap-3 pt-2">
+        <button type="button" onclick="hideModal('upload-version')" class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg">取消</button>
+        <button type="submit" class="px-4 py-2 bg-brand-600 text-white text-sm rounded-lg hover:bg-brand-700">上传</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- 创建部署 -->
+<div id="modal-deploy-create" class="hidden fixed inset-0 bg-black/50 z-50 flex items-start justify-center pt-20">
+  <div class="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4">
+    <div class="flex items-center justify-between px-6 py-4 border-b">
+      <h2 class="text-lg font-semibold">新建部署</h2>
+      <button onclick="hideModal('deploy-create')" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+    </div>
+    <form class="p-6 space-y-4" onsubmit="createDeploy(event)">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">部署名称 *</label>
+        <input name="name" required class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="西北-负荷预测-试运行">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">选择模型版本 *</label>
+        <select name="model_version_id" id="deploy-version-select" required class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
+          <option value="">请选择...</option>
+        </select>
+      </div>
+      <div class="flex justify-end gap-3 pt-2">
+        <button type="button" onclick="hideModal('deploy-create')" class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg">取消</button>
+        <button type="submit" class="px-4 py-2 bg-brand-600 text-white text-sm rounded-lg hover:bg-brand-700">创建</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- 在线推理 -->
+<div id="modal-predict" class="hidden fixed inset-0 bg-black/50 z-50 flex items-start justify-center pt-16">
+  <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4">
+    <div class="flex items-center justify-between px-6 py-4 border-b">
+      <h2 class="text-lg font-semibold">在线推理</h2>
+      <button onclick="hideModal('predict')" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+    </div>
+    <div class="p-6 space-y-4">
+      <input type="hidden" id="predict-deploy-id">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">输入数据 (JSON)</label>
+        <textarea id="predict-input" rows="4" class="w-full px-3 py-2 border rounded-lg text-sm font-mono" placeholder='{"input_data": [[25.0, 60.0, 14, 1, 0, 7]]}'></textarea>
+      </div>
+      <button onclick="runPredict()" class="w-full px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700">执行推理</button>
+      <div id="predict-result" class="hidden">
+        <label class="block text-sm font-medium text-gray-700 mb-1">推理结果</label>
+        <pre id="predict-output" class="bg-gray-900 text-green-400 p-4 rounded-lg text-sm overflow-x-auto"></pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+</main>
+
+<!-- Toast -->
+<div id="toast" class="hidden fixed bottom-6 right-6 z-50 px-4 py-3 rounded-lg shadow-lg text-sm text-white"></div>
+
+<script src="/static/app.js?v=8"></script>
+</body>
+</html>

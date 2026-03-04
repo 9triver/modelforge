@@ -1,0 +1,15 @@
+services:
+  modelforge:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - modelforge-data:/app/data
+    environment:
+      - MODELFORGE_MODEL_STORE_PATH=/app/data/model_store
+    restart: unless-stopped
+
+volumes:
+  modelforge-data:
