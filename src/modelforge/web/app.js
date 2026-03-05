@@ -80,6 +80,7 @@ let currentModelId = null;
 let currentModelData = null;
 let currentModelVersions = null;
 let currentSubTab = 'overview';
+let pendingAdaptGuide = null;  // diagnosis from trial eval, shown after fork
 
 function switchPage(page) {
   currentPage = page;
@@ -544,8 +545,57 @@ function renderStageContent(container, stageKey, data, versionId) {
       return;
     }
 
+    // Build adaptation guidance banner if pending
+    let guideBannerHtml = '';
+    if (pendingAdaptGuide && pendingAdaptGuide.diagnosis && v.source_model_id) {
+      const diag = pendingAdaptGuide.diagnosis;
+      const recs = diag.recommendations || [];
+      const drifted = (diag.drift_report || []).filter(f => f.psi_severity !== 'none');
+
+      let recListHtml = recs.map(function(r) {
+        var icons = { critical: '&#10007;', warning: '&#9888;', info: '&#8505;' };
+        var colors = {
+          critical: 'text-red-700',
+          warning: 'text-yellow-700',
+          info: 'text-blue-700',
+        };
+        var c = colors[r.severity] || colors.info;
+        return '<li class="flex gap-1.5 ' + c + '">' +
+          '<span class="flex-shrink-0">' + (icons[r.severity] || '') + '</span>' +
+          '<span>' + r.message + '</span></li>';
+      }).join('');
+
+      let driftHtml = '';
+      if (drifted.length) {
+        var driftItems = drifted.slice(0, 5).map(function(f) {
+          return '<span class="px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] rounded-full">' +
+            f.name + ' (PSI=' + f.psi.toFixed(2) + ')</span>';
+        }).join(' ');
+        driftHtml = '<div class="mt-2"><span class="text-xs text-gray-500">漂移特征: </span>' + driftItems + '</div>';
+      }
+
+      let stepsHtml =
+        '<div class="mt-3 flex flex-wrap gap-2">' +
+          '<span class="px-2.5 py-1 bg-white border rounded-lg text-xs text-gray-700 font-medium">① 上传本地数据</span>' +
+          '<span class="text-gray-300 flex items-center">→</span>' +
+          '<span class="px-2.5 py-1 bg-white border rounded-lg text-xs text-gray-700 font-medium">② 调整特征定义</span>' +
+          '<span class="text-gray-300 flex items-center">→</span>' +
+          '<span class="px-2.5 py-1 bg-white border rounded-lg text-xs text-gray-700 font-medium">③ 重新训练</span>' +
+        '</div>';
+
+      guideBannerHtml =
+        '<div class="bg-indigo-50 border border-indigo-200 rounded-lg p-4 relative">' +
+          '<button onclick="dismissAdaptGuide()" class="absolute top-2 right-2 text-indigo-300 hover:text-indigo-500 text-sm" title="关闭">&#10005;</button>' +
+          '<h4 class="text-sm font-semibold text-indigo-800 mb-2">适配指南 — 试评估诊断结果</h4>' +
+          '<ul class="space-y-1 text-xs leading-relaxed">' + recListHtml + '</ul>' +
+          driftHtml +
+          stepsHtml +
+        '</div>';
+    }
+
     container.innerHTML = `
       <div class="space-y-4">
+        ${guideBannerHtml}
         <div class="bg-gray-50 rounded-lg p-4">
           <h4 class="text-xs font-semibold text-gray-700 mb-3">📦 模型权重</h4>
           <div class="flex flex-wrap gap-4 text-sm">
@@ -567,6 +617,16 @@ function renderStageContent(container, stageKey, data, versionId) {
             </div>
           </div>
         ` : '<div class="text-xs text-gray-400 py-8 text-center">暂无评估指标</div>'}
+        <div class="flex justify-end gap-2 pt-2">
+          <button onclick="showRetrain('${versionId}')"
+            class="px-4 py-2 text-sm text-green-600 hover:bg-green-50 rounded-lg border border-green-200 font-medium">
+            重新训练
+          </button>
+          <button onclick="showTrialEvaluate('${versionId}')"
+            class="px-4 py-2 text-sm text-brand-600 hover:bg-brand-50 rounded-lg border border-brand-200 font-medium">
+            试评估
+          </button>
+        </div>
       </div>
     `;
     return;
@@ -1788,6 +1848,597 @@ async function loadMonitorData() {
       `).join('')
       : '<tr><td colspan="5" class="px-4 py-8 text-center text-gray-400 text-sm">暂无预测记录</td></tr>';
   } catch (e) { showToast(e.message, 'error'); }
+}
+
+// ── Trial Evaluation ──
+
+function showTrialEvaluate(versionId) {
+  const html = `
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+         id="trial-eval-overlay" onclick="if(event.target===this)this.remove()">
+      <div id="trial-eval-modal" class="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col" onclick="event.stopPropagation()">
+        <div class="flex items-center justify-between px-5 pt-4 pb-2 flex-shrink-0">
+          <h3 class="text-base font-semibold text-gray-800">试评估</h3>
+          <button onclick="document.getElementById('trial-eval-overlay').remove()"
+            class="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
+        </div>
+        <div class="overflow-y-auto px-5 pb-5 flex-1 min-h-0">
+          <div id="trial-eval-form-area">
+            <p class="text-xs text-gray-500 mb-4">上传一份带标签的 CSV 文件，平台将临时加载模型进行预测并对比训练指标。</p>
+            <form id="form-trial-eval" onsubmit="runTrialEvaluate(event,'${versionId}')">
+              <input type="file" name="file" accept=".csv" required
+                class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-brand-50 file:text-brand-700 hover:file:bg-brand-100 mb-4">
+              <p class="text-xs text-gray-400 mb-4">CSV 须包含特征列和目标列（标签），特征列名需与模型特征定义一致。</p>
+              <div class="flex justify-end gap-2">
+                <button type="submit" id="trial-eval-submit"
+                  class="px-4 py-2 bg-brand-600 text-white text-sm rounded-lg hover:bg-brand-700 font-medium">开始评估</button>
+              </div>
+            </form>
+          </div>
+          <div id="trial-eval-result" class="hidden"></div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function runTrialEvaluate(e, versionId) {
+  e.preventDefault();
+  const btn = document.getElementById('trial-eval-submit');
+  const resultDiv = document.getElementById('trial-eval-result');
+  const fd = new FormData(e.target);
+
+  btn.disabled = true;
+  btn.textContent = '评估中...';
+  resultDiv.classList.add('hidden');
+
+  try {
+    const res = await fetch(
+      API + `/models/${currentModelId}/versions/${versionId}/trial-evaluate`,
+      { method: 'POST', body: fd }
+    );
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || JSON.stringify(err));
+    }
+    const data = await res.json();
+    // Collapse form, widen modal for two-column layout
+    const formArea = document.getElementById('trial-eval-form-area');
+    if (formArea) formArea.classList.add('hidden');
+    const modal = document.getElementById('trial-eval-modal');
+    if (modal && data.diagnosis) {
+      modal.classList.remove('max-w-lg');
+      modal.classList.add('max-w-4xl');
+    }
+    renderTrialResult(resultDiv, data, versionId);
+    resultDiv.classList.remove('hidden');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '开始评估';
+  }
+}
+
+var _lastTrialData = null;  // stash for forkAndAdapt to pick up
+
+function renderTrialResult(container, data, versionId) {
+  _lastTrialData = data;
+  const verdictConfig = {
+    compatible: { label: '兼容', color: 'green', icon: '&#10003;' },
+    moderate_degradation: { label: '轻度退化', color: 'yellow', icon: '&#9888;' },
+    severe_degradation: { label: '严重退化', color: 'red', icon: '&#10007;' },
+  };
+  const vc = verdictConfig[data.verdict] || verdictConfig.compatible;
+  const colorMap = {
+    green: { bg: 'bg-green-50', border: 'border-green-200', text: 'text-green-700' },
+    yellow: { bg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-700' },
+    red: { bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-700' },
+  };
+  const cm = colorMap[vc.color];
+
+  // ── Metrics comparison table ──
+  const rows = data.comparison.map(c => {
+    const trainVal = c.training_value != null ? c.training_value.toFixed(4) : '-';
+    const trialVal = c.trial_value.toFixed(4);
+    let deltaHtml = '-';
+    if (c.delta_percent != null) {
+      const sign = c.delta_percent > 0 ? '+' : '';
+      const dc = c.delta_percent > 20 ? 'text-red-600' : c.delta_percent > 0 ? 'text-yellow-600' : 'text-green-600';
+      deltaHtml = `<span class="${dc} font-medium">${sign}${c.delta_percent.toFixed(1)}%</span>`;
+    }
+    return `<tr class="border-t border-gray-100">
+      <td class="py-1.5 pr-3 text-xs text-gray-600 font-medium">${c.name}</td>
+      <td class="py-1.5 pr-3 text-xs text-gray-500 text-right font-mono">${trainVal}</td>
+      <td class="py-1.5 pr-3 text-xs text-gray-900 text-right font-mono">${trialVal}</td>
+      <td class="py-1.5 text-xs text-right">${deltaHtml}</td>
+    </tr>`;
+  }).join('');
+
+  // ── Action buttons ──
+  let actionHtml = '';
+  if (data.verdict === 'compatible') {
+    actionHtml = `
+      <div class="flex items-center justify-between mt-3 pt-3 border-t border-green-200">
+        <span class="text-xs text-gray-500">模型兼容，可直接部署</span>
+        <button onclick="document.getElementById('trial-eval-overlay').remove();switchSubTab('deploy')"
+          class="px-4 py-1.5 bg-green-600 text-white text-xs rounded-lg hover:bg-green-700 font-medium">
+          去部署
+        </button>
+      </div>`;
+  } else {
+    actionHtml = `
+      <div class="mt-3 pt-3 border-t ${cm.border}">
+        <div class="flex items-center gap-2">
+          <input id="fork-org-input" type="text" placeholder="您的组织名称" value=""
+            class="flex-1 px-3 py-1.5 text-xs border border-gray-300 rounded-lg focus:outline-none focus:border-brand-500">
+          <button onclick="forkAndAdapt('${versionId}')" id="fork-adapt-btn"
+            class="px-4 py-1.5 bg-brand-600 text-white text-xs rounded-lg hover:bg-brand-700 font-medium whitespace-nowrap">
+            Fork 并适配
+          </button>
+        </div>
+      </div>`;
+  }
+
+  // ── Left column: verdict + metrics + action ──
+  const leftCol = `
+    <div>
+      <div class="${cm.bg} ${cm.border} border rounded-lg p-4">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-sm font-medium ${cm.text}">${vc.icon} ${vc.label}</span>
+          <span class="text-xs text-gray-500">${data.sample_count} 条 · ${data.features_matched}/${data.features_total} 特征</span>
+        </div>
+        <table class="w-full">
+          <thead>
+            <tr class="text-xs text-gray-400">
+              <th class="text-left pr-3 pb-1.5 font-medium">指标</th>
+              <th class="text-right pr-3 pb-1.5 font-medium">训练值</th>
+              <th class="text-right pr-3 pb-1.5 font-medium">试评估</th>
+              <th class="text-right pb-1.5 font-medium">变化</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+        ${actionHtml}
+      </div>
+    </div>`;
+
+  // ── No diagnosis → single column ──
+  if (!data.diagnosis) {
+    container.innerHTML = leftCol;
+    return;
+  }
+
+  // ── Right column: diagnosis ──
+  const d = data.diagnosis;
+
+  // Recommendations
+  const recHtml = d.recommendations.map(r => {
+    const icons = { critical: '&#10007;', warning: '&#9888;', info: '&#8505;' };
+    const colors = {
+      critical: 'text-red-600 bg-red-50 border-red-200',
+      warning: 'text-yellow-700 bg-yellow-50 border-yellow-200',
+      info: 'text-blue-600 bg-blue-50 border-blue-200',
+    };
+    const c = colors[r.severity] || colors.info;
+    return `<div class="flex gap-2 p-2 rounded border ${c}">
+      <span class="text-sm flex-shrink-0">${icons[r.severity] || ''}</span>
+      <span class="text-xs leading-relaxed">${r.message}</span>
+    </div>`;
+  }).join('');
+
+  // Feature importance bars
+  const top = d.feature_importance.slice(0, 6);
+  const maxVal = top[0]?.importance || 1;
+  const impHtml = top.map(f => {
+    const pct = Math.min(100, (f.importance / maxVal) * 100);
+    return `<div class="flex items-center gap-2 text-xs">
+      <span class="w-24 text-gray-600 truncate text-right flex-shrink-0">${f.name}</span>
+      <div class="flex-1 bg-gray-200 rounded-full h-1.5"><div class="bg-brand-500 h-1.5 rounded-full" style="width:${pct.toFixed(0)}%"></div></div>
+      <span class="w-10 text-gray-400 font-mono text-right flex-shrink-0">${f.importance.toFixed(0)}</span>
+    </div>`;
+  }).join('');
+
+  // Drift table
+  const drifted = d.drift_report.filter(f => f.psi_severity !== 'none');
+  const driftHtml = drifted.map(f => {
+    const sc = f.psi_severity === 'significant' ? 'text-red-600' : 'text-yellow-600';
+    return `<tr class="border-t border-gray-100">
+      <td class="py-1 text-xs text-gray-600">${f.name}</td>
+      <td class="py-1 text-xs text-gray-400 text-right">${f.ref_mean}±${f.ref_std}</td>
+      <td class="py-1 text-xs text-gray-400 text-right">${f.tgt_mean}±${f.tgt_std}</td>
+      <td class="py-1 text-xs ${sc} text-right font-medium">${f.psi.toFixed(2)}</td>
+    </tr>`;
+  }).join('');
+
+  const rightCol = `
+    <div class="space-y-3">
+      ${recHtml ? `<div class="space-y-1.5">${recHtml}</div>` : ''}
+      ${impHtml ? `
+        <div class="bg-gray-50 rounded-lg p-3">
+          <h4 class="text-xs font-semibold text-gray-700 mb-2">特征重要性 (SHAP)</h4>
+          <div class="space-y-1.5">${impHtml}</div>
+        </div>` : ''}
+      ${driftHtml ? `
+        <div class="bg-gray-50 rounded-lg p-3">
+          <h4 class="text-xs font-semibold text-gray-700 mb-2">分布漂移 (${drifted.length} 项偏移)</h4>
+          <table class="w-full">
+            <thead><tr class="text-xs text-gray-400">
+              <th class="text-left pb-1 font-medium">特征</th>
+              <th class="text-right pb-1 font-medium">训练</th>
+              <th class="text-right pb-1 font-medium">您的</th>
+              <th class="text-right pb-1 font-medium">PSI</th>
+            </tr></thead>
+            <tbody>${driftHtml}</tbody>
+          </table>
+        </div>` : ''}
+    </div>`;
+
+  container.innerHTML = `<div class="grid grid-cols-2 gap-4">${leftCol}${rightCol}</div>`;
+}
+
+async function forkAndAdapt(versionId) {
+  const orgInput = document.getElementById('fork-org-input');
+  const org = orgInput.value.trim();
+  if (!org) {
+    orgInput.focus();
+    showToast('请输入您的组织名称', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('fork-adapt-btn');
+  btn.disabled = true;
+  btn.textContent = '创建中...';
+
+  try {
+    const srcName = currentModelData.name;
+    const newName = `${srcName}-${org}适配`;
+
+    const result = await api(`/models/${currentModelId}/fork`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source_version_id: versionId,
+        new_name: newName,
+        new_owner_org: org,
+        description: `从 ${srcName} Fork，用于 ${org} 本地适配`,
+      }),
+    });
+
+    // Stash diagnosis for guidance banner on the forked version
+    if (_lastTrialData && _lastTrialData.diagnosis) {
+      pendingAdaptGuide = _lastTrialData;
+    }
+
+    // Close overlay and navigate to the new model's version tab
+    document.getElementById('trial-eval-overlay').remove();
+    showToast(`已创建 "${newName}"，请在版本中修改数据和参数后训练`);
+
+    // Load new model detail and jump directly to versions tab with output stage
+    const [model, versions] = await Promise.all([
+      api('/models/' + result.id),
+      api('/models/' + result.id + '/versions'),
+    ]);
+    currentModelId = result.id;
+    currentModelData = model;
+    currentModelVersions = versions;
+    document.getElementById('detail-breadcrumb').textContent = model.name;
+    renderDetailHeader(model);
+    switchPage('model-detail');
+
+    // Expand the forked version and show output stage with guidance banner
+    if (versions.length) {
+      expandedVersionId = versions[0].id;
+      activePipelineStage = 'output';
+      artifactTabCache = {};
+    }
+    switchSubTab('versions');
+  } catch (err) {
+    showToast(err.message, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Fork 并适配';
+  }
+}
+
+// ── Retrain ──
+
+let retrainRunId = null;
+let retrainPollTimer = null;
+
+async function showRetrain(versionId) {
+  const v = currentModelVersions.find(x => x.id === versionId);
+  if (!v) return;
+
+  // Create overlay immediately with loading state
+  const html = `
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+         id="retrain-overlay" onclick="if(event.target===this){stopRetrainPolling();this.remove()}">
+      <div class="bg-white rounded-xl shadow-xl w-full max-w-xl max-h-[90vh] flex flex-col" onclick="event.stopPropagation()">
+        <div class="flex items-center justify-between px-5 pt-4 pb-2 flex-shrink-0">
+          <h3 class="text-base font-semibold text-gray-800">重新训练</h3>
+          <button onclick="stopRetrainPolling();document.getElementById('retrain-overlay').remove()"
+            class="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
+        </div>
+        <div class="overflow-y-auto px-5 pb-5 flex-1 min-h-0">
+          <div id="retrain-config" class="text-sm text-gray-500">加载配置中...</div>
+          <div id="retrain-progress" class="hidden"></div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', html);
+
+  // Load pipeline and all artifact categories in parallel
+  try {
+    const [pipeline, datasets, codeFiles, featFiles, paramFiles] = await Promise.all([
+      api('/models/' + currentModelId + '/pipeline'),
+      api('/models/' + currentModelId + '/versions/' + versionId + '/artifacts/datasets'),
+      api('/models/' + currentModelId + '/versions/' + versionId + '/artifacts/code'),
+      api('/models/' + currentModelId + '/versions/' + versionId + '/artifacts/features'),
+      api('/models/' + currentModelId + '/versions/' + versionId + '/artifacts/params'),
+    ]);
+
+    if (!pipeline.exists) {
+      document.getElementById('retrain-config').innerHTML =
+        '<div class="text-center py-6">' +
+          '<div class="text-red-500 mb-2">未定义训练流水线</div>' +
+          '<div class="text-xs text-gray-400">请先在「流水线」标签页配置 pipeline.yaml</div>' +
+        '</div>';
+      return;
+    }
+
+    const p = pipeline.data || {};
+    const dp = p.data_prep || {};
+    const tr = p.training || {};
+    var hasWeights = !!v.file_path;
+
+    // Detect file name mismatches between pipeline config and actual files
+    var dsFileNames = (datasets || []).map(function(f) { return f.name; }).filter(function(n) { return n.endsWith('.csv'); });
+    var featFileNames = (featFiles || []).map(function(f) { return f.name; }).filter(function(n) { return n.endsWith('.yaml') || n.endsWith('.yml'); });
+    var paramFileNames = (paramFiles || []).map(function(f) { return f.name; }).filter(function(n) { return n.endsWith('.yaml') || n.endsWith('.yml'); });
+    var hasScript = (codeFiles || []).some(function(f) { return f.name === tr.script; });
+
+    var pipelineDs = dp.dataset || '';
+    var pipelineFeat = dp.feature_config || '';
+    var pipelineParams = tr.params || '';
+
+    var dsMismatch = pipelineDs && dsFileNames.length > 0 && dsFileNames.indexOf(pipelineDs) === -1;
+    var featMismatch = pipelineFeat && featFileNames.length > 0 && featFileNames.indexOf(pipelineFeat) === -1;
+    var paramMismatch = pipelineParams && paramFileNames.length > 0 && paramFileNames.indexOf(pipelineParams) === -1;
+    var hasMismatch = dsMismatch || featMismatch || paramMismatch;
+
+    // Helper: build <select> for file override
+    function fileSelect(id, pipelineName, fileList, mismatch) {
+      if (!mismatch && fileList.length <= 1) {
+        return '<span class="font-medium">' + (pipelineName || '无') + '</span>';
+      }
+      var opts = '';
+      if (!mismatch) {
+        opts += '<option value="">' + pipelineName + '</option>';
+      }
+      for (var i = 0; i < fileList.length; i++) {
+        var selected = (mismatch && fileList.length === 1) ? ' selected' : '';
+        opts += '<option value="' + fileList[i] + '"' + selected + '>' + fileList[i] + '</option>';
+      }
+      if (mismatch && fileList.length > 1) {
+        opts = '<option value="">-- 请选择 --</option>' + opts;
+      }
+      return '<select id="' + id + '" class="text-xs border rounded px-1 py-0.5 font-medium ' +
+        (mismatch ? 'border-amber-400 bg-amber-50' : '') + '">' + opts + '</select>';
+    }
+
+    var configHtml = '<div class="space-y-3">';
+
+    // Mismatch warning
+    if (hasMismatch) {
+      configHtml +=
+        '<div class="bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-700">' +
+          '流水线配置的文件名与版本中实际文件不匹配，请确认以下文件映射：' +
+        '</div>';
+    }
+
+    configHtml +=
+      '<div class="bg-gray-50 rounded-lg p-3">' +
+        '<div class="text-xs font-semibold text-gray-600 mb-2">训练配置</div>' +
+        '<div class="grid grid-cols-2 gap-x-4 gap-y-2 text-xs items-center">' +
+          '<div><span class="text-gray-400">基础版本:</span> <span class="font-medium">v' + v.version + '</span></div>' +
+          '<div><span class="text-gray-400">训练脚本:</span> <span class="font-medium ' + (hasScript ? '' : 'text-red-500') + '">' + (tr.script || '未指定') + '</span></div>' +
+          '<div><span class="text-gray-400">数据集' + (dsMismatch ? ' ⚠' : '') + ':</span> ' + fileSelect('retrain-ds', pipelineDs, dsFileNames, dsMismatch) + '</div>' +
+          '<div><span class="text-gray-400">特征' + (featMismatch ? ' ⚠' : '') + ':</span> ' + fileSelect('retrain-feat', pipelineFeat, featFileNames, featMismatch) + '</div>' +
+          '<div><span class="text-gray-400">超参数' + (paramMismatch ? ' ⚠' : '') + ':</span> ' + fileSelect('retrain-params', pipelineParams, paramFileNames, paramMismatch) + '</div>' +
+        '</div>' +
+      '</div>';
+
+    if (hasWeights) {
+      configHtml +=
+        '<label class="flex items-center gap-2 px-1 cursor-pointer">' +
+          '<input type="checkbox" id="retrain-warm-start" checked ' +
+            'class="w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500">' +
+          '<span class="text-xs text-gray-700">热启动（迁移学习）：在当前模型权重基础上继续训练</span>' +
+        '</label>';
+    }
+    configHtml +=
+      '<div class="flex justify-end gap-2 pt-1">' +
+        '<button type="button" onclick="stopRetrainPolling();document.getElementById(\'retrain-overlay\').remove()" ' +
+          'class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">取消</button>' +
+        '<button id="retrain-submit" onclick="runRetrain(\'' + versionId + '\')" ' +
+          'class="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 font-medium' +
+          (hasScript ? '' : ' opacity-50 cursor-not-allowed') + '"' +
+          (hasScript ? '' : ' disabled') + '>开始训练</button>' +
+      '</div>' +
+    '</div>';
+    document.getElementById('retrain-config').innerHTML = configHtml;
+  } catch (err) {
+    document.getElementById('retrain-config').innerHTML =
+      '<div class="text-center py-6 text-red-500 text-sm">' + escapeHtml(err.message) + '</div>';
+  }
+}
+
+async function runRetrain(versionId) {
+  const v = currentModelVersions.find(x => x.id === versionId);
+  if (!v) return;
+
+  const btn = document.getElementById('retrain-submit');
+  btn.disabled = true;
+  btn.textContent = '启动中...';
+
+  try {
+    const body = { base_version: 'v' + v.version };
+    var overrides = {};
+    // Collect file overrides from selects
+    var dsSel = document.getElementById('retrain-ds');
+    if (dsSel && dsSel.value) overrides.dataset = dsSel.value;
+    var featSel = document.getElementById('retrain-feat');
+    if (featSel && featSel.value) overrides.feature_config = featSel.value;
+    var paramSel = document.getElementById('retrain-params');
+    if (paramSel && paramSel.value) overrides.params = paramSel.value;
+    // Warm-start
+    var wsCheckbox = document.getElementById('retrain-warm-start');
+    if (wsCheckbox && wsCheckbox.checked && v.file_path) {
+      var weightsFile = v.file_path.split('/').pop();
+      overrides.warm_start = weightsFile;
+    }
+    if (Object.keys(overrides).length) body.overrides = overrides;
+
+    const run = await api('/models/' + currentModelId + '/pipeline/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    // Switch to progress view
+    document.getElementById('retrain-config').classList.add('hidden');
+    const progress = document.getElementById('retrain-progress');
+    progress.classList.remove('hidden');
+    renderRetrainProgress(progress, run);
+
+    retrainRunId = run.id;
+    startRetrainPolling();
+  } catch (err) {
+    showToast(err.message, 'error');
+    btn.disabled = false;
+    btn.textContent = '开始训练';
+  }
+}
+
+function startRetrainPolling() {
+  stopRetrainPolling();
+  retrainPollTimer = setInterval(pollRetrainStatus, 2000);
+}
+
+function stopRetrainPolling() {
+  if (retrainPollTimer) { clearInterval(retrainPollTimer); retrainPollTimer = null; }
+}
+
+async function pollRetrainStatus() {
+  if (!retrainRunId || !currentModelId) { stopRetrainPolling(); return; }
+  try {
+    const run = await api('/models/' + currentModelId + '/pipeline/runs/' + retrainRunId);
+    const progress = document.getElementById('retrain-progress');
+    if (!progress) { stopRetrainPolling(); return; }
+    renderRetrainProgress(progress, run);
+    if (run.status === 'success' || run.status === 'failed') {
+      stopRetrainPolling();
+      retrainRunId = null;
+      if (run.status === 'success') {
+        currentModelVersions = await api('/models/' + currentModelId + '/versions');
+      }
+    }
+  } catch (e) {
+    stopRetrainPolling();
+  }
+}
+
+function renderRetrainProgress(container, run) {
+  const statusColors = {
+    pending: 'bg-yellow-100 text-yellow-700 border-yellow-300',
+    running: 'bg-blue-100 text-blue-700 border-blue-300',
+    success: 'bg-green-100 text-green-700 border-green-300',
+    failed: 'bg-red-100 text-red-700 border-red-300',
+  };
+  const statusLabels = { pending: '准备中', running: '训练中', success: '训练完成', failed: '训练失败' };
+  const sc = statusColors[run.status] || statusColors.pending;
+  const sl = statusLabels[run.status] || run.status;
+
+  var logHtml = run.log
+    ? '<pre class="mt-3 p-3 bg-gray-900 text-green-400 text-[11px] font-mono rounded-lg max-h-48 overflow-y-auto whitespace-pre-wrap">' + escapeHtml(run.log) + '</pre>'
+    : '<div class="mt-3 text-xs text-gray-400 italic">等待日志输出...</div>';
+
+  var metricsHtml = '';
+  if (run.metrics) {
+    var cards = Object.entries(run.metrics)
+      .filter(function(e) { return typeof e[1] === 'number'; })
+      .map(function(e) {
+        return '<div class="text-center p-2 bg-white rounded border">' +
+          '<div class="text-[10px] text-gray-400">' + e[0] + '</div>' +
+          '<div class="text-sm font-semibold text-gray-700">' + e[1].toFixed(4) + '</div></div>';
+      }).join('');
+    metricsHtml = '<div class="mt-3 grid grid-cols-3 gap-2">' + cards + '</div>';
+  }
+
+  var actionHtml = '';
+  if (run.status === 'success' && run.result_version_id) {
+    actionHtml =
+      '<div class="mt-3 flex justify-end">' +
+        '<button onclick="viewNewVersion(\'' + run.result_version_id + '\')" ' +
+          'class="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 font-medium">' +
+          '查看新版本 v' + (run.result_version || '') +
+        '</button>' +
+      '</div>';
+  } else if (run.status === 'failed') {
+    actionHtml = '<div class="mt-3">';
+    if (run.error) {
+      actionHtml += '<div class="text-xs text-red-600 bg-red-50 rounded p-2 mb-2">' + escapeHtml(run.error) + '</div>';
+    }
+    actionHtml +=
+        '<div class="flex justify-end">' +
+          '<button onclick="stopRetrainPolling();document.getElementById(\'retrain-overlay\').remove()" ' +
+            'class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">关闭</button>' +
+        '</div>' +
+      '</div>';
+  }
+
+  container.innerHTML =
+    '<div class="border rounded-lg p-4 ' + sc + '">' +
+      '<div class="flex items-center justify-between">' +
+        '<div class="flex items-center gap-2">' +
+          '<span class="text-sm font-medium">' + sl + '</span>' +
+          (run.status === 'running' ? '<span class="inline-block w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>' : '') +
+        '</div>' +
+        '<div class="text-[10px] text-gray-500">' +
+          (run.base_version || '') + ' &rarr; v' + (run.target_version || '...') +
+          (run.finished_at ? ' | ' + formatTime(run.finished_at) : '') +
+        '</div>' +
+      '</div>' +
+      metricsHtml +
+      logHtml +
+      actionHtml +
+    '</div>';
+
+  // Auto-scroll log
+  var logEl = container.querySelector('pre');
+  if (logEl) logEl.scrollTop = logEl.scrollHeight;
+}
+
+function viewNewVersion(versionId) {
+  stopRetrainPolling();
+  var overlay = document.getElementById('retrain-overlay');
+  if (overlay) overlay.remove();
+  expandedVersionId = versionId;
+  activePipelineStage = 'output';
+  artifactTabCache = {};
+  renderVersionsTab();
+}
+
+// ── Adaptation Guide ──
+
+function dismissAdaptGuide() {
+  pendingAdaptGuide = null;
+  if (expandedVersionId && activePipelineStage === 'output') {
+    invalidateArtifactCache(expandedVersionId);
+    loadPipelineStage(expandedVersionId, 'output');
+  }
 }
 
 // ── Init ──

@@ -1,0 +1,64 @@
+features:
+- data_type: float
+  description: 环境温度（摄氏度）。华北冬季常低于 -15°C，是供暖负荷的主要驱动
+  name: temperature
+  unit: celsius
+  value_range:
+    max: 5
+    min: -25
+- data_type: float
+  description: 供暖需求指数 = max(0, (10-temp)/30)。华北冬季该指标长期高位，是最重要特征
+  name: heating_index
+  unit: null
+  value_range:
+    max: 1.0
+    min: 0.15
+- data_type: float
+  description: 风速，影响风寒效应和建筑热损。华北冬季风速偏高
+  name: wind_speed
+  unit: m/s
+  value_range:
+    max: 12
+    min: 1
+- data_type: float
+  description: 相对湿度。华北冬季偏干，与华东差异大
+  name: humidity
+  unit: percent
+  value_range:
+    max: 60
+    min: 10
+- data_type: int
+  description: 一天中的小时 (0-23)
+  name: hour
+  unit: null
+  value_range:
+    max: 23
+    min: 0
+- data_type: int
+  description: 星期几 (0=周一, 6=周日)
+  name: day_of_week
+  unit: null
+  value_range:
+    max: 6
+    min: 0
+- data_type: int
+  description: 是否周末 (0=工作日, 1=周末)
+  name: is_weekend
+  unit: null
+  value_range:
+    max: 1
+    min: 0
+- data_type: int
+  description: 是否法定节假日 (0=否, 1=是)
+  name: is_holiday
+  unit: null
+  value_range:
+    max: 1
+    min: 0
+group_name: 华北负荷预测特征集-XGB-适配
+target: load_mw
+# 适配说明:
+#   移除: air_conditioning_index (华北冬季恒为 0, 零方差)
+#   移除: month (当前数据仅含 1 月, 单值无区分力)
+#   调整: 各特征 value_range 按华北实际分布修正
+#   排序: 按特征重要性降序 (heating_index 提升至第 2 位)

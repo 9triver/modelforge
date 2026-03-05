@@ -119,6 +119,29 @@ def train(
     if ws_path and Path(ws_path).exists():
         print(f"[迁移学习] 加载基础模型: {ws_path}")
         base_model = joblib.load(ws_path)
+
+        # Align features: base model may expect different columns
+        base_features = None
+        if hasattr(base_model, "get_booster"):
+            base_features = base_model.get_booster().feature_names
+        elif hasattr(base_model, "feature_names_in_"):
+            base_features = list(base_model.feature_names_in_)
+
+        if base_features and set(base_features) != set(X_train.columns):
+            added = [f for f in base_features if f not in X_train.columns]
+            dropped = [f for f in X_train.columns if f not in base_features]
+            if added:
+                print(f"[迁移学习] 补零对齐特征: {added}")
+                for col in added:
+                    X_train[col] = 0.0
+                    X_test[col] = 0.0
+            if dropped:
+                print(f"[迁移学习] 忽略基础模型未使用的特征: {dropped}")
+            X_train = X_train[base_features]
+            X_test = X_test[base_features]
+            available = base_features
+            print(f"[迁移学习] 对齐后特征 ({len(available)}): {available}")
+
         n_additional = model_params.pop("n_estimators", 100)
         model = xgb.XGBRegressor(
             n_estimators=n_additional, **model_params,

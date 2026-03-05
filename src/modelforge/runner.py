@@ -221,6 +221,13 @@ class PipelineRunner:
             if params:
                 cmd += ["--params", f"params/{params}"]
 
+            warm_start = overrides.get("warm_start")
+            if warm_start:
+                cmd += [
+                    "--warm-start",
+                    f"weights/{warm_start}",
+                ]
+
             output_cfg = pipeline.get("output", {})
             output_format = output_cfg.get("format", "joblib")
             weights_filename = self._find_weights_file(

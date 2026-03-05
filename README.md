@@ -24,8 +24,8 @@ ModelForge 围绕一个核心问题构建：**如何让电力行业的 AI 模型
 ┌────────────────────────▼─────────────────────────────────┐
 │                   FastAPI Server                          │
 │  ┌──────────┐ ┌──────────┐ ┌───────────┐ ┌───────────┐  │
-│  │ Registry │ │ Pipeline │ │ Deploy &  │ │ Monitoring│  │
-│  │   API    │ │  Runner  │ │ Inference │ │    API    │  │
+│  │ Registry │ │ Pipeline │ │ Deploy &  │ │ Evaluation│  │
+│  │   API    │ │  Runner  │ │ Inference │ │ & Diagnos │  │
 │  └────┬─────┘ └────┬─────┘ └─────┬─────┘ └─────┬─────┘  │
 │       └─────────────┼─────────────┼─────────────┘        │
 │                     ▼             ▼                       │
@@ -164,6 +164,93 @@ curl -X POST http://localhost:8000/api/v1/predict/load-forecast-prod \
   -d '{"input_data": [[1, 2], [3, 4]]}'
 ```
 
+## 跨区域模型适配
+
+ModelForge 提供完整的跨区域模型适配能力，解决电力行业 AI 模型在不同地区间共享时面临的数据分布差异问题。
+
+### 适配流程
+
+```
+共享模型 ──→ 试评估 ──→ 诊断分析 ──→ Fork ──→ 本地适配 ──→ 重新训练 ──→ 部署
+  │            │           │          │          │             │
+  │            │           │          │          │             ▼
+  │            ▼           ▼          ▼          ▼        新版本自动生成
+  │         上传本地     SHAP      创建新模型   替换数据     含权重+指标
+  │         标签CSV    特征重要性   复制全部     调整特征
+  │                    PSI漂移     资产        修改参数
+  │                    检测
+  ▼
+ 兼容 → 直接部署
+```
+
+### 试评估与诊断
+
+在复用共享模型前，上传本地带标签数据进行兼容性评估：
+
+- **指标对比** — 计算本地数据上的 MAE/RMSE/MAPE，与原始训练指标逐项对比
+- **兼容性判定** — 自动给出三级判定：
+  - `compatible` — 指标偏差 ≤10%，可直接部署
+  - `moderate_degradation` — 指标偏差 10%-30%，建议适配
+  - `severe_degradation` — 指标偏差 >30%，需要重新训练
+
+当检测到退化时，自动运行诊断分析：
+
+- **SHAP 特征重要性** — 识别模型决策的关键特征，指导特征工程调整方向
+- **PSI/KS 分布漂移** — 逐特征检测训练数据与本地数据的分布差异，量化漂移程度
+- **自动化建议** — 根据诊断结果生成分级建议（critical / warning / info）
+
+### Fork 与适配引导
+
+试评估发现不兼容后，一键 Fork 创建本地适配模型：
+
+1. **Fork** — 从共享模型版本创建新模型，复制全部资产（数据、特征、参数、代码、权重）
+2. **适配指南** — 自动在 Fork 后的版本卡片上展示诊断摘要，引导用户：
+   - ① 上传本地数据集
+   - ② 调整特征定义（移除零方差特征、修正 value_range）
+   - ③ 触发重新训练
+3. **Dismiss** — 用户了解后可关闭引导 banner
+
+### 重新训练（Retrain）
+
+在版本卡片上直接触发训练，无需切换页面：
+
+- **配置确认** — 显示当前 pipeline 配置，自动检测文件名不匹配并提供覆写下拉
+- **热启动（Warm-Start）** — 勾选后基于当前模型权重继续训练（迁移学习），自动处理特征对齐：
+  - 检测基础模型的特征集
+  - 补零缺失特征
+  - 按基础模型特征顺序重排列
+- **实时进度** — 训练日志实时滚动，完成后显示指标网格，一键跳转到新版本
+
+### 跨区域适配示例
+
+`examples/cross_region_adaptation/` 提供华东→华北负荷预测的端到端适配示例：
+
+```
+华东模型 (MAPE ~1.4%)
+    │
+    ├── 直接应用华北数据 → MAPE ~26%（严重退化）
+    │
+    ├── 诊断分析:
+    │   ├── SHAP: heating_index 重要性大幅上升，air_conditioning_index 降至 0
+    │   └── PSI: temperature, humidity, heating_index 显著漂移
+    │
+    ├── 适配策略:
+    │   ├── 移除零方差特征 (air_conditioning_index, month)
+    │   ├── 调整 value_range 按华北分布
+    │   └── Warm-Start 迁移训练
+    │
+    └── 适配后 → MAPE ~1.3%（优于从零训练的 ~1.8%）
+```
+
+运行示例：
+
+```bash
+cd examples/cross_region_adaptation
+pip install -r requirements.txt
+python run_scenario.py          # 完整 8 步演示
+python seed_store.py            # 预填充到 ModelForge 平台
+```
+
 ## 快速开始
 
 ```bash
@@ -191,13 +278,14 @@ open http://localhost:8000/docs
 
 | 模块 | 路径前缀 | 功能 |
 |------|----------|------|
-| 模型注册 | `/api/v1/models` | 模型 CRUD、状态流转 |
+| 模型注册 | `/api/v1/models` | 模型 CRUD、状态流转、Fork |
 | 版本管理 | `/api/v1/models/{id}/versions` | 上传版本、创建草稿、阶段流转 |
 | 文件管理 | `/api/v1/models/{id}/versions/{vid}/artifacts` | 上传/编辑/删除训练文件 |
 | 流水线 | `/api/v1/models/{id}/pipeline` | 定义和执行训练流水线 |
+| 试评估 | `/api/v1/models/{id}/versions/{vid}/trial-evaluate` | 上传 CSV 评估兼容性 + 诊断 |
 | 部署 | `/api/v1/deployments` | 部署管理、启停控制 |
 | 推理 | `/api/v1/predict/{name}` | 通过部署名称调用预测 |
-| 监控 | `/api/v1/monitoring` | 预测日志、精度回溯 |
+| 监控 | `/api/v1/deployments/{id}/stats` | 预测日志、精度回溯 |
 
 ## 存储结构
 
@@ -226,7 +314,7 @@ model_store/
 # 运行全部测试
 .venv/bin/python -m pytest tests/ -x -q
 
-# 当前测试数：72
+# 当前测试数：80
 ```
 
 ## 许可证
