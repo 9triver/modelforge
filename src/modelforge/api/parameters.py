@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, Query
 
 from modelforge.schemas.parameters import (
+    ParameterCompareRequest,
+    ParameterCompareResponse,
     ParameterTemplateCreate,
     ParameterTemplateResponse,
     ParameterTemplateUpdate,
@@ -33,6 +35,11 @@ def list_templates(
         limit=limit,
     )
     return [ParameterTemplateResponse.model_validate(t) for t in results]
+
+
+@router.post("/compare", response_model=ParameterCompareResponse)
+def compare_parameters(body: ParameterCompareRequest, store: ModelStore = Depends(get_store)):
+    return store.compare_parameters(body)
 
 
 @router.get("/{template_id}", response_model=ParameterTemplateResponse)

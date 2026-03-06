@@ -34,3 +34,28 @@ class ParameterTemplateResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ── Parameter Comparison ──
+
+
+class ParameterCompareRequest(BaseModel):
+    left_type: str  # "template"
+    left_id: str
+    right_type: str  # "template"
+    right_id: str
+
+
+class ParamDiffEntry(BaseModel):
+    key: str
+    left_value: Any = None
+    right_value: Any = None
+    changed: bool
+
+
+class ParameterCompareResponse(BaseModel):
+    left_label: str
+    right_label: str
+    diff: list[ParamDiffEntry]
+    left_only: list[str]
+    right_only: list[str]

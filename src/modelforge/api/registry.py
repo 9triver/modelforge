@@ -1,7 +1,9 @@
 import json
+import os
+import tempfile
 
 import yaml
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 
 from modelforge.enums import AssetStatus
@@ -19,6 +21,7 @@ from modelforge.schemas.registry import (
     StageTransition,
     StatusTransition,
 )
+from modelforge.schemas.transfer import ExportRequest
 from modelforge.store import ModelStore, get_store
 
 router = APIRouter(prefix="/models", tags=["Model Registry"])
@@ -41,6 +44,10 @@ def list_models(
     framework: str | None = None,
     status: AssetStatus | None = None,
     q: str | None = Query(None, description="Search in name and description"),
+    region: str | None = Query(None, description="Filter by region in applicable_scenarios"),
+    season: str | None = Query(None, description="Filter by season in applicable_scenarios"),
+    equipment_type: str | None = Query(None, description="Filter by equipment_type"),
+    voltage_level: str | None = Query(None, description="Filter by voltage_level"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
     store: ModelStore = Depends(get_store),
@@ -52,10 +59,47 @@ def list_models(
         framework=framework,
         status=status,
         q=q,
+        region=region,
+        season=season,
+        equipment_type=equipment_type,
+        voltage_level=voltage_level,
         skip=skip,
         limit=limit,
     )
     return [ModelAssetResponse.model_validate(m) for m in results]
+
+
+# ── Import endpoints (must be before /{model_id} to avoid path conflicts) ──
+
+
+@router.post("/import/preview")
+async def preview_import(file: UploadFile = File(...), store: ModelStore = Depends(get_store)):
+    from pathlib import Path
+
+    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+        tmp.write(await file.read())
+        tmp_path = Path(tmp.name)
+    try:
+        return store.preview_import(tmp_path)
+    finally:
+        os.unlink(tmp_path)
+
+
+@router.post("/import", status_code=201)
+async def import_model(
+    file: UploadFile = File(...),
+    new_name: str | None = Form(None),
+    store: ModelStore = Depends(get_store),
+):
+    from pathlib import Path
+
+    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+        tmp.write(await file.read())
+        tmp_path = Path(tmp.name)
+    try:
+        return store.import_model(tmp_path, new_name=new_name)
+    finally:
+        os.unlink(tmp_path)
 
 
 @router.get("/{model_id}", response_model=ModelAssetResponse)
@@ -322,3 +366,31 @@ def fork_model(
         description=body.description,
     )
     return result
+
+
+# ── Export ──
+
+
+@router.post("/{model_id}/export")
+def export_model(
+    model_id: str,
+    background_tasks: BackgroundTasks,
+    body: ExportRequest | None = None,
+    store: ModelStore = Depends(get_store),
+):
+    if body is None:
+        body = ExportRequest()
+
+    zip_path = store.export_model(
+        model_id,
+        version_ids=body.version_ids,
+        include_runs=body.include_runs,
+        include_datasets=body.include_datasets,
+    )
+    background_tasks.add_task(os.unlink, str(zip_path))
+    slug = store._find_slug_by_id(model_id) or "model"
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=f"modelforge-{slug}.zip",
+    )

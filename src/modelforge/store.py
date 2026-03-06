@@ -302,6 +302,10 @@ class ModelStore:
         framework: str | None = None,
         status: str | None = None,
         q: str | None = None,
+        region: str | None = None,
+        season: str | None = None,
+        equipment_type: str | None = None,
+        voltage_level: str | None = None,
         skip: int = 0,
         limit: int = 20,
     ) -> list[dict]:
@@ -326,6 +330,27 @@ class ModelStore:
                 for m in results
                 if q_lower in (m.get("name") or "").lower()
                 or q_lower in (m.get("description") or "").lower()
+            ]
+        if region:
+            results = [
+                m for m in results
+                if region in (m.get("applicable_scenarios") or {}).get("region", [])
+            ]
+        if season:
+            results = [
+                m for m in results
+                if season in (m.get("applicable_scenarios") or {}).get("season", [])
+                or "all" in (m.get("applicable_scenarios") or {}).get("season", [])
+            ]
+        if equipment_type:
+            results = [
+                m for m in results
+                if equipment_type in (m.get("applicable_scenarios") or {}).get("equipment_type", [])
+            ]
+        if voltage_level:
+            results = [
+                m for m in results
+                if voltage_level in (m.get("applicable_scenarios") or {}).get("voltage_level", [])
             ]
 
         results.sort(key=lambda m: m.get("updated_at", ""), reverse=True)
@@ -1518,6 +1543,283 @@ class ModelStore:
         if len(catalog["templates"]) == original_len:
             raise HTTPException(404, "Parameter template not found")
         self._write_param_catalog(catalog)
+
+    def compare_parameters(self, request) -> dict:
+        from fastapi import HTTPException
+
+        def _resolve(ptype, pid):
+            if ptype == "template":
+                catalog = self._read_param_catalog()
+                for t in catalog["templates"]:
+                    if t["id"] == pid:
+                        return t["name"], t.get("parameters", {})
+                raise HTTPException(404, f"Template {pid} not found")
+            raise HTTPException(400, f"Unsupported type: {ptype}")
+
+        left_label, left_params = _resolve(request.left_type, request.left_id)
+        right_label, right_params = _resolve(request.right_type, request.right_id)
+
+        all_keys = sorted(set(list(left_params.keys()) + list(right_params.keys())))
+        diff = []
+        left_only = []
+        right_only = []
+        for k in all_keys:
+            in_left = k in left_params
+            in_right = k in right_params
+            if in_left and in_right:
+                diff.append({
+                    "key": k,
+                    "left_value": left_params[k],
+                    "right_value": right_params[k],
+                    "changed": left_params[k] != right_params[k],
+                })
+            elif in_left:
+                left_only.append(k)
+            else:
+                right_only.append(k)
+
+        return {
+            "left_label": left_label,
+            "right_label": right_label,
+            "diff": diff,
+            "left_only": left_only,
+            "right_only": right_only,
+        }
+
+    # ── Export / Import ──
+
+    def export_model(
+        self,
+        model_id: str,
+        version_ids: list[str] | None = None,
+        include_runs: bool = False,
+        include_datasets: bool = True,
+    ) -> Path:
+        """Export a model + selected versions as a ZIP archive."""
+        import tempfile
+        import zipfile
+
+        from fastapi import HTTPException
+
+        slug = self._find_slug_by_id(model_id)
+        if not slug:
+            raise HTTPException(404, "Model not found")
+
+        model_dir = self._model_dir(slug)
+        model_data = YAMLFile.read(self._model_yaml_path(slug))
+
+        # Collect version dirs
+        versions_dir = model_dir / "versions"
+        version_dirs: list[tuple[str, Path]] = []
+        if versions_dir.exists():
+            for vdir in sorted(versions_dir.iterdir()):
+                if not vdir.is_dir():
+                    continue
+                vyaml = vdir / "version.yaml"
+                if not vyaml.exists():
+                    continue
+                vdata = YAMLFile.read(vyaml)
+                if version_ids is None or vdata.get("id") in version_ids:
+                    version_dirs.append((vdir.name, vdir))
+
+        if not version_dirs:
+            raise HTTPException(400, "No versions to export")
+
+        # Build ZIP in temp file
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=".zip", prefix=f"modelforge-export-{slug}-", delete=False
+        )
+        tmp.close()
+        zip_path = Path(tmp.name)
+
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            # model.yaml
+            zf.write(self._model_yaml_path(slug), "model.yaml")
+
+            # pipeline.yaml (if exists)
+            pipeline = model_dir / "pipeline.yaml"
+            if pipeline.exists():
+                zf.write(pipeline, "pipeline.yaml")
+
+            # Version directories
+            for vname, vdir in version_dirs:
+                for fpath in vdir.rglob("*"):
+                    if not fpath.is_file():
+                        continue
+                    rel = fpath.relative_to(vdir)
+                    # Skip datasets/ if not requested
+                    if not include_datasets and rel.parts[0] == "datasets":
+                        continue
+                    zf.write(fpath, f"versions/{vname}/{rel}")
+
+            # runs/ (if requested)
+            if include_runs:
+                runs_dir = model_dir / "runs"
+                if runs_dir.exists():
+                    for fpath in runs_dir.rglob("*"):
+                        if fpath.is_file():
+                            rel = fpath.relative_to(model_dir)
+                            zf.write(fpath, str(rel))
+
+            # manifest.json
+            manifest = {
+                "format_version": "1.0",
+                "exported_at": _now_str(),
+                "source_model_id": model_id,
+                "source_model_name": model_data["name"],
+                "versions_included": [vn for vn, _ in version_dirs],
+            }
+            zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+
+        return zip_path
+
+    def preview_import(self, zip_path: Path) -> dict:
+        """Preview contents of an import ZIP without actually importing."""
+        import zipfile
+
+        from fastapi import HTTPException
+
+        if not zipfile.is_zipfile(zip_path):
+            raise HTTPException(400, "Invalid ZIP file")
+
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            # Read manifest
+            if "manifest.json" not in zf.namelist():
+                raise HTTPException(400, "Missing manifest.json in archive")
+            manifest = json.loads(zf.read("manifest.json"))
+
+            # Read model.yaml
+            if "model.yaml" not in zf.namelist():
+                raise HTTPException(400, "Missing model.yaml in archive")
+            model_data = yaml.safe_load(zf.read("model.yaml"))
+
+            # List versions
+            versions = []
+            for vname in manifest.get("versions_included", []):
+                vyaml_path = f"versions/{vname}/version.yaml"
+                if vyaml_path in zf.namelist():
+                    vdata = yaml.safe_load(zf.read(vyaml_path))
+                    versions.append({
+                        "version": vdata.get("version", vname),
+                        "id": vdata.get("id"),
+                        "stage": vdata.get("stage"),
+                        "description": vdata.get("description"),
+                    })
+
+            has_pipeline = "pipeline.yaml" in zf.namelist()
+
+            # Check name collision
+            model_name = model_data.get("name", "unknown")
+            name_collision = False
+            with self._index_lock:
+                for entry in self._index:
+                    if entry["name"] == model_name:
+                        name_collision = True
+                        break
+
+            suggested_name = model_name
+            if name_collision:
+                suggested_name = model_name + " (导入)"
+
+            return {
+                "model_name": model_name,
+                "source_model_id": manifest.get("source_model_id", ""),
+                "algorithm_type": model_data.get("algorithm_type"),
+                "framework": model_data.get("framework"),
+                "versions": versions,
+                "has_pipeline": has_pipeline,
+                "name_collision": name_collision,
+                "suggested_name": suggested_name,
+            }
+
+    def import_model(self, zip_path: Path, new_name: str | None = None) -> dict:
+        """Import a model from an exported ZIP archive."""
+        import zipfile
+
+        from fastapi import HTTPException
+
+        if not zipfile.is_zipfile(zip_path):
+            raise HTTPException(400, "Invalid ZIP file")
+
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            if "manifest.json" not in zf.namelist():
+                raise HTTPException(400, "Missing manifest.json in archive")
+            manifest = json.loads(zf.read("manifest.json"))
+
+            if "model.yaml" not in zf.namelist():
+                raise HTTPException(400, "Missing model.yaml in archive")
+            model_data = yaml.safe_load(zf.read("model.yaml"))
+
+            # Create new model with new ID
+            model_name = new_name or model_data.get("name", "Imported Model")
+            new_model = self.create_model({
+                "name": model_name,
+                "description": model_data.get("description"),
+                "task_type": model_data.get("task_type", "other"),
+                "algorithm_type": model_data.get("algorithm_type", "unknown"),
+                "framework": model_data.get("framework", "unknown"),
+                "owner_org": model_data.get("owner_org", "导入"),
+                "tags": model_data.get("tags"),
+                "applicable_scenarios": model_data.get("applicable_scenarios"),
+                "algorithm_description": model_data.get("algorithm_description"),
+            })
+            new_slug = new_model["slug"]
+            new_model_id = new_model["id"]
+
+            # Store imported_from metadata
+            model_yaml_path = self._model_yaml_path(new_slug)
+            updated_model = YAMLFile.read(model_yaml_path)
+            updated_model["imported_from"] = {
+                "source_model_id": manifest.get("source_model_id"),
+                "source_model_name": manifest.get("source_model_name"),
+                "exported_at": manifest.get("exported_at"),
+            }
+            YAMLFile.write(model_yaml_path, updated_model)
+
+            # Extract versions
+            now = _now_str()
+            for vname in manifest.get("versions_included", []):
+                vdir = self._model_dir(new_slug) / "versions" / vname
+                vdir.mkdir(parents=True, exist_ok=True)
+
+                # Extract all files for this version
+                prefix = f"versions/{vname}/"
+                for zinfo in zf.infolist():
+                    if zinfo.filename.startswith(prefix) and not zinfo.is_dir():
+                        rel = zinfo.filename[len(prefix):]
+                        target = vdir / rel
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_bytes(zf.read(zinfo.filename))
+
+                # Update version.yaml with new ID
+                vyaml = vdir / "version.yaml"
+                if vyaml.exists():
+                    vdata = YAMLFile.read(vyaml)
+                    vdata["id"] = _new_id()
+                    vdata["imported_from_version_id"] = vdata.get("id")
+                    vdata["created_at"] = now
+                    vdata["updated_at"] = now
+                    YAMLFile.write(vyaml, vdata)
+
+            # Copy pipeline.yaml if present
+            if "pipeline.yaml" in zf.namelist():
+                pipeline_target = self._model_dir(new_slug) / "pipeline.yaml"
+                pipeline_target.write_bytes(zf.read("pipeline.yaml"))
+
+            # Copy runs/ if present
+            runs_prefix = "runs/"
+            for zinfo in zf.infolist():
+                if zinfo.filename.startswith(runs_prefix) and not zinfo.is_dir():
+                    target = self._model_dir(new_slug) / zinfo.filename
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(zf.read(zinfo.filename))
+
+            # Update index
+            self._update_index_entry(
+                YAMLFile.read(self._model_yaml_path(new_slug))
+            )
+
+            return {**new_model, "imported_from": updated_model["imported_from"]}
 
     # ── Deployments ──
 

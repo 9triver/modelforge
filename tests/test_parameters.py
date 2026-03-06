@@ -78,3 +78,83 @@ def test_template_linked_to_model(client):
         f"{PREFIX}/parameter-templates", params={"model_asset_id": model["id"]}
     )
     assert len(resp.json()) == 1
+
+
+# ── Comparison tests ──
+
+
+def test_compare_two_templates(client):
+    t1 = _create_template(
+        client,
+        name="模板A",
+        parameters={"lr": 0.1, "epochs": 100, "batch_size": 32},
+    ).json()
+    t2 = _create_template(
+        client,
+        name="模板B",
+        parameters={"lr": 0.05, "epochs": 100, "dropout": 0.3},
+    ).json()
+
+    resp = client.post(
+        f"{PREFIX}/parameter-templates/compare",
+        json={
+            "left_type": "template",
+            "left_id": t1["id"],
+            "right_type": "template",
+            "right_id": t2["id"],
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["left_label"] == "模板A"
+    assert data["right_label"] == "模板B"
+
+    # lr changed, epochs unchanged
+    diff_map = {d["key"]: d for d in data["diff"]}
+    assert diff_map["lr"]["changed"] is True
+    assert diff_map["epochs"]["changed"] is False
+
+    # batch_size only in left, dropout only in right
+    assert "batch_size" in data["left_only"]
+    assert "dropout" in data["right_only"]
+
+
+def test_compare_identical(client):
+    t1 = _create_template(
+        client,
+        name="Same1",
+        parameters={"a": 1, "b": 2},
+    ).json()
+    t2 = _create_template(
+        client,
+        name="Same2",
+        parameters={"a": 1, "b": 2},
+    ).json()
+
+    resp = client.post(
+        f"{PREFIX}/parameter-templates/compare",
+        json={
+            "left_type": "template",
+            "left_id": t1["id"],
+            "right_type": "template",
+            "right_id": t2["id"],
+        },
+    )
+    data = resp.json()
+    assert all(not d["changed"] for d in data["diff"])
+    assert data["left_only"] == []
+    assert data["right_only"] == []
+
+
+def test_compare_missing_template(client):
+    t1 = _create_template(client, name="Exists").json()
+    resp = client.post(
+        f"{PREFIX}/parameter-templates/compare",
+        json={
+            "left_type": "template",
+            "left_id": t1["id"],
+            "right_type": "template",
+            "right_id": "nonexistent-id",
+        },
+    )
+    assert resp.status_code == 404

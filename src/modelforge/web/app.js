@@ -86,6 +86,18 @@ function switchPage(page) {
   currentPage = page;
   document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
 
+  // highlight nav
+  document.querySelectorAll('.nav-btn').forEach(b => {
+    b.classList.remove('bg-brand-50', 'text-brand-700');
+    b.classList.add('text-gray-600');
+  });
+  var navId = (page === 'model-detail') ? 'nav-models' : 'nav-' + page;
+  var navEl = document.getElementById(navId);
+  if (navEl) {
+    navEl.classList.add('bg-brand-50', 'text-brand-700');
+    navEl.classList.remove('text-gray-600');
+  }
+
   if (page === 'model-detail') {
     document.getElementById('page-model-detail').classList.remove('hidden');
     return;
@@ -93,6 +105,8 @@ function switchPage(page) {
 
   document.getElementById('page-' + page).classList.remove('hidden');
   if (page === 'models') loadModels();
+  if (page === 'features') loadFeatures();
+  if (page === 'params') loadParamTemplates();
 }
 
 // ── Health Check ──
@@ -120,10 +134,18 @@ async function loadModels() {
   const q = document.getElementById('model-search').value;
   const task = document.getElementById('model-filter-task').value;
   const status = document.getElementById('model-filter-status').value;
+  const region = document.getElementById('model-filter-region').value;
+  const season = document.getElementById('model-filter-season').value;
+  const equipment = document.getElementById('model-filter-equipment').value;
+  const voltage = document.getElementById('model-filter-voltage').value;
   const params = new URLSearchParams();
   if (q) params.set('q', q);
   if (task) params.set('task_type', task);
   if (status) params.set('status', status);
+  if (region) params.set('region', region);
+  if (season) params.set('season', season);
+  if (equipment) params.set('equipment_type', equipment);
+  if (voltage) params.set('voltage_level', voltage);
 
   try {
     const models = await api('/models?' + params);
@@ -132,24 +154,31 @@ async function loadModels() {
       container.innerHTML = '<div class="col-span-3 text-center py-12 text-gray-400">暂无模型</div>';
       return;
     }
-    container.innerHTML = models.map(m => `
-      <div class="bg-white rounded-xl border hover:shadow-md transition cursor-pointer p-5" onclick="openModelDetail('${m.id}')">
-        <div class="flex items-start justify-between mb-3">
-          <h3 class="font-medium text-gray-900 text-sm leading-tight">${m.name}</h3>
-          ${badge(m.status)}
-        </div>
-        <p class="text-xs text-gray-500 mb-3 line-clamp-2">${m.description || '暂无描述'}</p>
-        <div class="flex flex-wrap gap-1.5 mb-3">
-          <span class="px-2 py-0.5 bg-purple-50 text-purple-700 text-xs rounded-full">${taskTypeLabels[m.task_type] || m.task_type}</span>
-          <span class="px-2 py-0.5 bg-indigo-50 text-indigo-700 text-xs rounded-full">${m.algorithm_type}</span>
-          <span class="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full">${m.framework}</span>
-        </div>
-        <div class="flex items-center justify-between text-xs text-gray-400">
-          <span>${m.owner_org}</span>
-          <span>${m.version_count} 个版本</span>
-        </div>
-      </div>
-    `).join('');
+    container.innerHTML = models.map(function(m) {
+      var regionPills = '';
+      if (m.applicable_scenarios && m.applicable_scenarios.region) {
+        regionPills = m.applicable_scenarios.region.map(function(r) {
+          return '<span class="px-2 py-0.5 bg-teal-50 text-teal-700 text-xs rounded-full">' + r + '</span>';
+        }).join('');
+      }
+      return '<div class="bg-white rounded-xl border hover:shadow-md transition cursor-pointer p-5" onclick="openModelDetail(\'' + m.id + '\')">'
+        + '<div class="flex items-start justify-between mb-3">'
+        + '<h3 class="font-medium text-gray-900 text-sm leading-tight">' + m.name + '</h3>'
+        + badge(m.status)
+        + '</div>'
+        + '<p class="text-xs text-gray-500 mb-3 line-clamp-2">' + (m.description || '暂无描述') + '</p>'
+        + '<div class="flex flex-wrap gap-1.5 mb-3">'
+        + '<span class="px-2 py-0.5 bg-purple-50 text-purple-700 text-xs rounded-full">' + (taskTypeLabels[m.task_type] || m.task_type) + '</span>'
+        + '<span class="px-2 py-0.5 bg-indigo-50 text-indigo-700 text-xs rounded-full">' + m.algorithm_type + '</span>'
+        + '<span class="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full">' + m.framework + '</span>'
+        + regionPills
+        + '</div>'
+        + '<div class="flex items-center justify-between text-xs text-gray-400">'
+        + '<span>' + m.owner_org + '</span>'
+        + '<span>' + m.version_count + ' 个版本</span>'
+        + '</div>'
+        + '</div>';
+    }).join('');
   } catch (e) {
     showToast(e.message, 'error');
   }
@@ -168,6 +197,19 @@ async function createModel(e) {
     algorithm_description: fd.get('algorithm_description') || null,
     tags: fd.get('tags') ? fd.get('tags').split(',').map(s => s.trim()).filter(Boolean) : null,
   };
+  // Collect scenario checkboxes
+  var regions = fd.getAll('region');
+  var seasons = fd.getAll('season');
+  var eqRaw = fd.get('equipment_type');
+  var vlRaw = fd.get('voltage_level');
+  var eqList = eqRaw ? eqRaw.split(',').map(function(s){return s.trim();}).filter(Boolean) : [];
+  var vlList = vlRaw ? vlRaw.split(',').map(function(s){return s.trim();}).filter(Boolean) : [];
+  var scenarios = {};
+  if (regions.length) scenarios.region = regions;
+  if (seasons.length) scenarios.season = seasons;
+  if (eqList.length) scenarios.equipment_type = eqList;
+  if (vlList.length) scenarios.voltage_level = vlList;
+  if (Object.keys(scenarios).length) body.applicable_scenarios = scenarios;
   try {
     await api('/models', {
       method: 'POST',
@@ -299,12 +341,7 @@ function renderOverviewTab() {
         </div>
       </div>
 
-      ${m.applicable_scenarios ? `
-        <div class="bg-white rounded-xl border p-5">
-          <h3 class="text-sm font-medium text-gray-700 mb-2">适用场景</h3>
-          <pre class="text-xs bg-gray-50 p-3 rounded-lg overflow-x-auto">${JSON.stringify(m.applicable_scenarios, null, 2)}</pre>
-        </div>
-      ` : ''}
+      ${m.applicable_scenarios ? renderScenarioCard(m.applicable_scenarios) : '<div class="bg-white rounded-xl border p-5"><h3 class="text-sm font-medium text-gray-700 mb-2">适用场景</h3><p class="text-xs text-gray-400">暂未配置</p><button onclick="showEditScenariosDialog()" class="mt-2 text-xs text-brand-600 hover:underline">+ 配置场景</button></div>'}
 
       ${m.input_schema ? `
         <div class="bg-white rounded-xl border p-5">
@@ -344,6 +381,17 @@ function renderOverviewTab() {
         <button onclick="showForkDialog()"
           class="px-4 py-2 text-sm rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100">
           \u2442 Fork 到新模型
+        </button>
+      </div>
+      ` : ''}
+
+      ${currentModelVersions.length ? `
+      <div class="bg-white rounded-xl border p-5">
+        <h3 class="text-sm font-medium text-gray-700 mb-3">导出模型</h3>
+        <p class="text-xs text-gray-500 mb-3">将模型打包为 ZIP 文件，便于跨区域共享和离线传输</p>
+        <button onclick="showExportDialog()"
+          class="px-4 py-2 text-sm rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">
+          导出模型包
         </button>
       </div>
       ` : ''}
@@ -545,10 +593,10 @@ function renderStageContent(container, stageKey, data, versionId) {
       return;
     }
 
-    // Build adaptation guidance banner if pending
+    // Build adaptation guidance banner if pending (scoped to exact forked version)
     let guideBannerHtml = '';
-    if (pendingAdaptGuide && pendingAdaptGuide.diagnosis && v.source_model_id) {
-      const diag = pendingAdaptGuide.diagnosis;
+    if (pendingAdaptGuide && pendingAdaptGuide.versionId === v.id && pendingAdaptGuide.data && pendingAdaptGuide.data.diagnosis) {
+      const diag = pendingAdaptGuide.data.diagnosis;
       const recs = diag.recommendations || [];
       const drifted = (diag.drift_report || []).filter(f => f.psi_severity !== 'none');
 
@@ -697,6 +745,7 @@ function renderStageContent(container, stageKey, data, versionId) {
               </button>`
             ).join('')}</div>` : ''}
             <div id="artifact-view-${cat}-${versionId}"></div>
+            ${stageKey === 'training' && cat === 'params' ? '<div class="mt-2"><button onclick="recommendTemplate(\'' + versionId + '\')" class="px-3 py-1.5 text-xs text-purple-600 hover:bg-purple-50 rounded-lg border border-purple-200 font-medium">推荐模板</button></div>' : ''}
           </div>
         `;
       }).join('')}
@@ -2106,11 +2155,6 @@ async function forkAndAdapt(versionId) {
       }),
     });
 
-    // Stash diagnosis for guidance banner on the forked version
-    if (_lastTrialData && _lastTrialData.diagnosis) {
-      pendingAdaptGuide = _lastTrialData;
-    }
-
     // Close overlay and navigate to the new model's version tab
     document.getElementById('trial-eval-overlay').remove();
     showToast(`已创建 "${newName}"，请在版本中修改数据和参数后训练`);
@@ -2126,6 +2170,11 @@ async function forkAndAdapt(versionId) {
     document.getElementById('detail-breadcrumb').textContent = model.name;
     renderDetailHeader(model);
     switchPage('model-detail');
+
+    // Stash diagnosis for guidance banner — scoped to the forked version
+    if (_lastTrialData && _lastTrialData.diagnosis && versions.length) {
+      pendingAdaptGuide = { data: _lastTrialData, versionId: versions[0].id };
+    }
 
     // Expand the forked version and show output stage with guidance banner
     if (versions.length) {
@@ -2439,6 +2488,1046 @@ function dismissAdaptGuide() {
     invalidateArtifactCache(expandedVersionId);
     loadPipelineStage(expandedVersionId, 'output');
   }
+}
+
+// ── Scenario Card & Edit ──
+
+var scenarioLabels = {
+  region: '适用地区',
+  season: '适用季节',
+  equipment_type: '设备类型',
+  voltage_level: '电压等级'
+};
+
+var seasonLabels = {
+  all: '全年', spring: '春季', summer: '夏季', autumn: '秋季', winter: '冬季'
+};
+
+function renderScenarioCard(scenarios) {
+  var rows = '';
+  var keys = ['region', 'season', 'equipment_type', 'voltage_level'];
+  for (var i = 0; i < keys.length; i++) {
+    var k = keys[i];
+    var vals = scenarios[k];
+    if (!vals || !vals.length) continue;
+    var pills = vals.map(function(v) {
+      var label = (k === 'season') ? (seasonLabels[v] || v) : v;
+      return '<span class="px-2 py-0.5 bg-teal-50 text-teal-700 text-xs rounded-full">' + label + '</span>';
+    }).join(' ');
+    rows += '<div class="flex items-center gap-2 mb-2">'
+      + '<span class="text-xs text-gray-500 w-16 shrink-0">' + scenarioLabels[k] + '</span>'
+      + '<div class="flex flex-wrap gap-1">' + pills + '</div>'
+      + '</div>';
+  }
+  // Check for extra keys
+  var extraKeys = Object.keys(scenarios).filter(function(k) { return keys.indexOf(k) === -1; });
+  for (var j = 0; j < extraKeys.length; j++) {
+    var ek = extraKeys[j];
+    var ev = scenarios[ek];
+    var evStr = Array.isArray(ev) ? ev.join(', ') : String(ev);
+    rows += '<div class="flex items-center gap-2 mb-2">'
+      + '<span class="text-xs text-gray-500 w-16 shrink-0">' + ek + '</span>'
+      + '<span class="text-xs text-gray-700">' + evStr + '</span>'
+      + '</div>';
+  }
+  if (!rows) rows = '<p class="text-xs text-gray-400">场景信息为空</p>';
+  return '<div class="bg-white rounded-xl border p-5">'
+    + '<div class="flex items-center justify-between mb-3">'
+    + '<h3 class="text-sm font-medium text-gray-700">适用场景</h3>'
+    + '<button onclick="showEditScenariosDialog()" class="text-xs text-brand-600 hover:underline">编辑</button>'
+    + '</div>'
+    + rows
+    + '</div>';
+}
+
+function showEditScenariosDialog() {
+  var m = currentModelData;
+  var s = (m && m.applicable_scenarios) || {};
+  var regionVals = s.region || [];
+  var seasonVals = s.season || [];
+  var eqVals = s.equipment_type || [];
+  var vlVals = s.voltage_level || [];
+
+  var allRegions = ['华东','华中','华南','华北','西北','西南','东北'];
+  var allSeasons = [
+    {v:'all',l:'全年'},{v:'spring',l:'春季'},{v:'summer',l:'夏季'},
+    {v:'autumn',l:'秋季'},{v:'winter',l:'冬季'}
+  ];
+
+  var regionHtml = allRegions.map(function(r) {
+    var chk = regionVals.indexOf(r) >= 0 ? ' checked' : '';
+    return '<label class="flex items-center gap-1 text-sm"><input type="checkbox" name="ed_region" value="' + r + '"' + chk + '> ' + r + '</label>';
+  }).join(' ');
+
+  var seasonHtml = allSeasons.map(function(o) {
+    var chk = seasonVals.indexOf(o.v) >= 0 ? ' checked' : '';
+    return '<label class="flex items-center gap-1 text-sm"><input type="checkbox" name="ed_season" value="' + o.v + '"' + chk + '> ' + o.l + '</label>';
+  }).join(' ');
+
+  var html = '<div id="scenario-edit-overlay" class="fixed inset-0 bg-black/50 z-50 flex items-start justify-center pt-16">'
+    + '<div class="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4">'
+    + '<div class="flex items-center justify-between px-6 py-4 border-b">'
+    + '<h2 class="text-lg font-semibold">编辑适用场景</h2>'
+    + '<button onclick="document.getElementById(\'scenario-edit-overlay\').remove()" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>'
+    + '</div>'
+    + '<div class="p-6 space-y-4">'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">适用地区</label><div class="flex flex-wrap gap-2">' + regionHtml + '</div></div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">适用季节</label><div class="flex flex-wrap gap-2">' + seasonHtml + '</div></div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">设备类型 (逗号分隔)</label>'
+    + '<input id="ed_equipment" class="w-full px-3 py-2 border rounded-lg text-sm" value="' + eqVals.join(', ') + '"></div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">电压等级 (逗号分隔)</label>'
+    + '<input id="ed_voltage" class="w-full px-3 py-2 border rounded-lg text-sm" value="' + vlVals.join(', ') + '"></div>'
+    + '<div class="flex justify-end gap-3 pt-2">'
+    + '<button onclick="document.getElementById(\'scenario-edit-overlay\').remove()" class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg">取消</button>'
+    + '<button onclick="saveScenarios()" class="px-4 py-2 bg-brand-600 text-white text-sm rounded-lg hover:bg-brand-700">保存</button>'
+    + '</div>'
+    + '</div></div></div>';
+
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function saveScenarios() {
+  var overlay = document.getElementById('scenario-edit-overlay');
+  var regions = Array.from(overlay.querySelectorAll('input[name="ed_region"]:checked')).map(function(el){return el.value;});
+  var seasons = Array.from(overlay.querySelectorAll('input[name="ed_season"]:checked')).map(function(el){return el.value;});
+  var eqRaw = document.getElementById('ed_equipment').value;
+  var vlRaw = document.getElementById('ed_voltage').value;
+  var eqList = eqRaw ? eqRaw.split(',').map(function(s){return s.trim();}).filter(Boolean) : [];
+  var vlList = vlRaw ? vlRaw.split(',').map(function(s){return s.trim();}).filter(Boolean) : [];
+
+  var scenarios = {};
+  if (regions.length) scenarios.region = regions;
+  if (seasons.length) scenarios.season = seasons;
+  if (eqList.length) scenarios.equipment_type = eqList;
+  if (vlList.length) scenarios.voltage_level = vlList;
+
+  try {
+    await api('/models/' + currentModelId, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ applicable_scenarios: Object.keys(scenarios).length ? scenarios : null }),
+    });
+    overlay.remove();
+    showToast('场景信息已更新');
+    openModelDetail(currentModelId);
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+// ── Feature Registry Page ──
+
+var _featureDefCache = [];
+
+async function loadFeatures() {
+  try {
+    var results = await Promise.all([
+      api('/features/definitions?limit=100'),
+      api('/features/groups?limit=100')
+    ]);
+    _featureDefCache = results[0];
+    renderFeatureDefTable(results[0]);
+    renderFeatureGroupCards(results[1]);
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+function renderFeatureDefTable(defs) {
+  var el = document.getElementById('feature-def-table');
+  if (!defs.length) {
+    el.innerHTML = '<div class="p-8 text-center text-gray-400 text-sm">暂无特征定义</div>';
+    return;
+  }
+  new Tabulator(el, {
+    data: defs,
+    layout: 'fitColumns',
+    height: Math.min(defs.length * 40 + 50, 400),
+    columns: [
+      { title: '名称', field: 'name', minWidth: 120 },
+      { title: '数据类型', field: 'data_type', width: 80 },
+      { title: '单位', field: 'unit', width: 70, formatter: function(cell) { return cell.getValue() || '-'; } },
+      { title: '描述', field: 'description', minWidth: 200, formatter: function(cell) {
+        var v = cell.getValue();
+        return v ? '<span class="text-xs text-gray-600">' + v + '</span>' : '-';
+      }},
+      { title: '取值范围', field: 'value_range', width: 120, formatter: function(cell) {
+        var v = cell.getValue();
+        if (!v) return '-';
+        var parts = [];
+        if (v.min !== undefined) parts.push('min:' + v.min);
+        if (v.max !== undefined) parts.push('max:' + v.max);
+        return parts.join(' ') || JSON.stringify(v);
+      }},
+      { title: '操作', width: 100, hozAlign: 'center', formatter: function(cell) {
+        var id = cell.getRow().getData().id;
+        return '<button class="text-xs text-brand-600 hover:underline mr-2" onclick="showEditFeatureDialog(\'' + id + '\')">编辑</button>'
+          + '<button class="text-xs text-red-500 hover:underline" onclick="deleteFeatureDef(\'' + id + '\')">删除</button>';
+      }}
+    ]
+  });
+}
+
+function showCreateFeatureDialog() {
+  var html = '<div id="feat-overlay" class="fixed inset-0 bg-black/50 z-50 flex items-start justify-center pt-16">'
+    + '<div class="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4">'
+    + '<div class="flex items-center justify-between px-6 py-4 border-b">'
+    + '<h2 class="text-lg font-semibold">新建特征定义</h2>'
+    + '<button onclick="document.getElementById(\'feat-overlay\').remove()" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>'
+    + '</div>'
+    + '<form id="form-create-feat" class="p-6 space-y-4" onsubmit="createFeatureDef(event)">'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">特征名称 *</label>'
+    + '<input name="name" required class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="temperature"></div>'
+    + '<div class="grid grid-cols-2 gap-4">'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">数据类型 *</label>'
+    + '<select name="data_type" required class="w-full px-3 py-2 border rounded-lg text-sm bg-white">'
+    + '<option value="float">float</option><option value="int">int</option><option value="str">str</option><option value="bool">bool</option>'
+    + '</select></div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">单位</label>'
+    + '<input name="unit" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="celsius"></div>'
+    + '</div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">描述</label>'
+    + '<textarea name="description" rows="2" class="w-full px-3 py-2 border rounded-lg text-sm"></textarea></div>'
+    + '<div class="grid grid-cols-2 gap-4">'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">最小值</label>'
+    + '<input name="range_min" type="number" step="any" class="w-full px-3 py-2 border rounded-lg text-sm"></div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">最大值</label>'
+    + '<input name="range_max" type="number" step="any" class="w-full px-3 py-2 border rounded-lg text-sm"></div>'
+    + '</div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">计算逻辑</label>'
+    + '<input name="computation_logic" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="max(0, (10-temp)/30)"></div>'
+    + '<div class="flex justify-end gap-3 pt-2">'
+    + '<button type="button" onclick="document.getElementById(\'feat-overlay\').remove()" class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg">取消</button>'
+    + '<button type="submit" class="px-4 py-2 bg-brand-600 text-white text-sm rounded-lg hover:bg-brand-700">创建</button>'
+    + '</div></form></div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function createFeatureDef(e) {
+  e.preventDefault();
+  var fd = new FormData(e.target);
+  var body = {
+    name: fd.get('name'),
+    data_type: fd.get('data_type'),
+    unit: fd.get('unit') || null,
+    description: fd.get('description') || null,
+    computation_logic: fd.get('computation_logic') || null
+  };
+  var rMin = fd.get('range_min'), rMax = fd.get('range_max');
+  if (rMin !== '' || rMax !== '') {
+    body.value_range = {};
+    if (rMin !== '') body.value_range.min = parseFloat(rMin);
+    if (rMax !== '') body.value_range.max = parseFloat(rMax);
+  }
+  try {
+    await api('/features/definitions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    var overlay = document.getElementById('feat-overlay');
+    if (overlay) overlay.remove();
+    showToast('特征定义已创建');
+    loadFeatures();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+function showEditFeatureDialog(id) {
+  var feat = _featureDefCache.find(function(f) { return f.id === id; });
+  if (!feat) return;
+  var vr = feat.value_range || {};
+  var html = '<div id="feat-overlay" class="fixed inset-0 bg-black/50 z-50 flex items-start justify-center pt-16">'
+    + '<div class="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4">'
+    + '<div class="flex items-center justify-between px-6 py-4 border-b">'
+    + '<h2 class="text-lg font-semibold">编辑特征定义</h2>'
+    + '<button onclick="document.getElementById(\'feat-overlay\').remove()" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>'
+    + '</div>'
+    + '<form class="p-6 space-y-4" onsubmit="updateFeatureDef(event,\'' + id + '\')">'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">特征名称 *</label>'
+    + '<input name="name" required class="w-full px-3 py-2 border rounded-lg text-sm" value="' + feat.name + '"></div>'
+    + '<div class="grid grid-cols-2 gap-4">'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">数据类型 *</label>'
+    + '<select name="data_type" required class="w-full px-3 py-2 border rounded-lg text-sm bg-white">'
+    + '<option value="float"' + (feat.data_type === 'float' ? ' selected' : '') + '>float</option>'
+    + '<option value="int"' + (feat.data_type === 'int' ? ' selected' : '') + '>int</option>'
+    + '<option value="str"' + (feat.data_type === 'str' ? ' selected' : '') + '>str</option>'
+    + '<option value="bool"' + (feat.data_type === 'bool' ? ' selected' : '') + '>bool</option>'
+    + '</select></div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">单位</label>'
+    + '<input name="unit" class="w-full px-3 py-2 border rounded-lg text-sm" value="' + (feat.unit || '') + '"></div>'
+    + '</div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">描述</label>'
+    + '<textarea name="description" rows="2" class="w-full px-3 py-2 border rounded-lg text-sm">' + (feat.description || '') + '</textarea></div>'
+    + '<div class="grid grid-cols-2 gap-4">'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">最小值</label>'
+    + '<input name="range_min" type="number" step="any" class="w-full px-3 py-2 border rounded-lg text-sm" value="' + (vr.min !== undefined ? vr.min : '') + '"></div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">最大值</label>'
+    + '<input name="range_max" type="number" step="any" class="w-full px-3 py-2 border rounded-lg text-sm" value="' + (vr.max !== undefined ? vr.max : '') + '"></div>'
+    + '</div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">计算逻辑</label>'
+    + '<input name="computation_logic" class="w-full px-3 py-2 border rounded-lg text-sm" value="' + (feat.computation_logic || '') + '"></div>'
+    + '<div class="flex justify-end gap-3 pt-2">'
+    + '<button type="button" onclick="document.getElementById(\'feat-overlay\').remove()" class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg">取消</button>'
+    + '<button type="submit" class="px-4 py-2 bg-brand-600 text-white text-sm rounded-lg hover:bg-brand-700">保存</button>'
+    + '</div></form></div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function updateFeatureDef(e, id) {
+  e.preventDefault();
+  var fd = new FormData(e.target);
+  var body = {
+    name: fd.get('name'),
+    data_type: fd.get('data_type'),
+    unit: fd.get('unit') || null,
+    description: fd.get('description') || null,
+    computation_logic: fd.get('computation_logic') || null
+  };
+  var rMin = fd.get('range_min'), rMax = fd.get('range_max');
+  if (rMin !== '' || rMax !== '') {
+    body.value_range = {};
+    if (rMin !== '') body.value_range.min = parseFloat(rMin);
+    if (rMax !== '') body.value_range.max = parseFloat(rMax);
+  } else {
+    body.value_range = null;
+  }
+  try {
+    await api('/features/definitions/' + id, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    var overlay = document.getElementById('feat-overlay');
+    if (overlay) overlay.remove();
+    showToast('特征定义已更新');
+    loadFeatures();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+async function deleteFeatureDef(id) {
+  if (!confirm('确定删除该特征定义？')) return;
+  try {
+    await api('/features/definitions/' + id, { method: 'DELETE' });
+    showToast('特征定义已删除');
+    loadFeatures();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+function renderFeatureGroupCards(groups) {
+  var el = document.getElementById('feature-group-list');
+  if (!groups.length) {
+    el.innerHTML = '<div class="col-span-2 text-center py-8 text-gray-400 text-sm">暂无特征组</div>';
+    return;
+  }
+  el.innerHTML = groups.map(function(g) {
+    var tags = '';
+    if (g.scenario_tags) {
+      var tagKeys = Object.keys(g.scenario_tags);
+      for (var i = 0; i < tagKeys.length; i++) {
+        var k = tagKeys[i];
+        var vals = g.scenario_tags[k];
+        if (Array.isArray(vals)) {
+          tags += vals.map(function(v) {
+            return '<span class="px-2 py-0.5 bg-teal-50 text-teal-700 text-xs rounded-full">' + v + '</span>';
+          }).join(' ');
+        } else {
+          tags += '<span class="px-2 py-0.5 bg-teal-50 text-teal-700 text-xs rounded-full">' + vals + '</span>';
+        }
+        tags += ' ';
+      }
+    }
+    var featList = g.features.map(function(f) {
+      return '<div class="flex items-center gap-2 text-xs py-1 border-b border-gray-50 last:border-0">'
+        + '<span class="font-medium text-gray-700">' + f.name + '</span>'
+        + '<span class="text-gray-400">' + f.data_type + '</span>'
+        + (f.unit ? '<span class="text-gray-400">(' + f.unit + ')</span>' : '')
+        + '</div>';
+    }).join('');
+    if (!featList) featList = '<div class="text-xs text-gray-400 py-1">暂无特征</div>';
+    return '<div class="bg-white rounded-xl border p-5">'
+      + '<div class="flex items-start justify-between mb-2">'
+      + '<h3 class="font-medium text-gray-900 text-sm">' + g.name + '</h3>'
+      + '<button onclick="deleteFeatureGroup(\'' + g.id + '\')" class="text-xs text-red-500 hover:underline">删除</button>'
+      + '</div>'
+      + (g.description ? '<p class="text-xs text-gray-500 mb-2">' + g.description + '</p>' : '')
+      + (tags ? '<div class="flex flex-wrap gap-1 mb-3">' + tags + '</div>' : '')
+      + '<div class="text-xs text-gray-500 mb-1">' + g.features.length + ' 个特征</div>'
+      + '<div class="bg-gray-50 rounded-lg p-2 max-h-40 overflow-y-auto">' + featList + '</div>'
+      + '</div>';
+  }).join('');
+}
+
+function showCreateGroupDialog() {
+  var checkboxes = _featureDefCache.map(function(f) {
+    return '<label class="flex items-center gap-2 text-sm py-0.5">'
+      + '<input type="checkbox" name="feat_id" value="' + f.id + '"> '
+      + f.name + ' <span class="text-gray-400">(' + f.data_type + ')</span>'
+      + '</label>';
+  }).join('');
+  if (!checkboxes) checkboxes = '<div class="text-xs text-gray-400">请先创建特征定义</div>';
+
+  var html = '<div id="group-overlay" class="fixed inset-0 bg-black/50 z-50 flex items-start justify-center pt-12 overflow-y-auto">'
+    + '<div class="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 mb-12">'
+    + '<div class="flex items-center justify-between px-6 py-4 border-b">'
+    + '<h2 class="text-lg font-semibold">新建特征组</h2>'
+    + '<button onclick="document.getElementById(\'group-overlay\').remove()" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>'
+    + '</div>'
+    + '<form class="p-6 space-y-4" onsubmit="createFeatureGroup(event)">'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">特征组名称 *</label>'
+    + '<input name="name" required class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="华东负荷预测特征集"></div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">描述</label>'
+    + '<textarea name="description" rows="2" class="w-full px-3 py-2 border rounded-lg text-sm"></textarea></div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">场景标签 (JSON)</label>'
+    + '<input name="scenario_tags" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder=\'{"region":["华东"],"task":"load_forecast"}\'></div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">选择特征</label>'
+    + '<div class="max-h-48 overflow-y-auto border rounded-lg p-3">' + checkboxes + '</div></div>'
+    + '<div class="flex justify-end gap-3 pt-2">'
+    + '<button type="button" onclick="document.getElementById(\'group-overlay\').remove()" class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg">取消</button>'
+    + '<button type="submit" class="px-4 py-2 bg-brand-600 text-white text-sm rounded-lg hover:bg-brand-700">创建</button>'
+    + '</div></form></div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function createFeatureGroup(e) {
+  e.preventDefault();
+  var fd = new FormData(e.target);
+  var featureIds = fd.getAll('feat_id');
+  var tagsRaw = fd.get('scenario_tags');
+  var scenarioTags = null;
+  if (tagsRaw) {
+    try { scenarioTags = JSON.parse(tagsRaw); } catch (_) {
+      showToast('场景标签 JSON 格式错误', 'error');
+      return;
+    }
+  }
+  var body = {
+    name: fd.get('name'),
+    description: fd.get('description') || null,
+    scenario_tags: scenarioTags,
+    feature_ids: featureIds
+  };
+  try {
+    await api('/features/groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    var overlay = document.getElementById('group-overlay');
+    if (overlay) overlay.remove();
+    showToast('特征组已创建');
+    loadFeatures();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+async function deleteFeatureGroup(id) {
+  if (!confirm('确定删除该特征组？')) return;
+  try {
+    await api('/features/groups/' + id, { method: 'DELETE' });
+    showToast('特征组已删除');
+    loadFeatures();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+// ── Parameter Templates Page ──
+
+var _paramTemplateCache = [];
+var _paramAllCache = [];
+
+async function loadParamTemplates() {
+  try {
+    var templates = await api('/parameter-templates?limit=100');
+    _paramAllCache = templates;
+    _paramTemplateCache = templates;
+    populateAlgoFilter(templates);
+    renderParamTemplateCards(templates);
+    loadCompareOptions();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+function populateAlgoFilter(templates) {
+  var sel = document.getElementById('param-filter-algo');
+  if (!sel) return;
+  var algos = {};
+  templates.forEach(function(t) { if (t.algorithm_type) algos[t.algorithm_type] = true; });
+  var opts = '<option value="">全部算法类型</option>';
+  Object.keys(algos).forEach(function(a) {
+    opts += '<option value="' + a + '">' + a + '</option>';
+  });
+  sel.innerHTML = opts;
+}
+
+function filterParamTemplates() {
+  var q = (document.getElementById('param-search').value || '').toLowerCase();
+  var algo = document.getElementById('param-filter-algo').value;
+  var filtered = _paramAllCache.filter(function(t) {
+    if (algo && t.algorithm_type !== algo) return false;
+    if (q && (t.name || '').toLowerCase().indexOf(q) === -1) return false;
+    return true;
+  });
+  _paramTemplateCache = filtered;
+  renderParamTemplateCards(filtered);
+}
+
+function renderParamTemplateCards(templates) {
+  var el = document.getElementById('param-template-list');
+  if (!el) return;
+  if (!templates.length) {
+    el.innerHTML = '<div class="col-span-3 text-center py-12 text-gray-400">暂无参数模板</div>';
+    return;
+  }
+  el.innerHTML = templates.map(function(t) {
+    var tags = '';
+    if (t.scenario_tags) {
+      var tagKeys = Object.keys(t.scenario_tags);
+      for (var i = 0; i < tagKeys.length; i++) {
+        var k = tagKeys[i];
+        var v = t.scenario_tags[k];
+        var label = Array.isArray(v) ? v.join(', ') : String(v);
+        tags += '<span class="px-2 py-0.5 bg-teal-50 text-teal-700 text-xs rounded-full">' + k + ': ' + label + '</span> ';
+      }
+    }
+    var paramsPreview = '';
+    if (t.parameters) {
+      var paramKeys = Object.keys(t.parameters);
+      paramsPreview = paramKeys.slice(0, 4).map(function(pk) {
+        return '<div class="flex justify-between text-xs py-0.5">'
+          + '<span class="text-gray-500">' + pk + '</span>'
+          + '<span class="text-gray-700 font-mono">' + t.parameters[pk] + '</span>'
+          + '</div>';
+      }).join('');
+      if (paramKeys.length > 4) {
+        paramsPreview += '<div class="text-xs text-gray-400">... 共 ' + paramKeys.length + ' 个参数</div>';
+      }
+    }
+    return '<div class="bg-white rounded-xl border p-5" data-template-id="' + t.id + '">'
+      + '<div class="flex items-start justify-between mb-2">'
+      + '<h3 class="font-medium text-gray-900 text-sm">' + t.name + '</h3>'
+      + '<div class="flex gap-2">'
+      + '<button onclick="showEditParamTemplateDialog(\'' + t.id + '\')" class="text-xs text-brand-600 hover:underline">编辑</button>'
+      + '<button onclick="deleteParamTemplate(\'' + t.id + '\')" class="text-xs text-red-500 hover:underline">删除</button>'
+      + '</div></div>'
+      + (t.algorithm_type ? '<span class="px-2 py-0.5 bg-indigo-50 text-indigo-700 text-xs rounded-full">' + t.algorithm_type + '</span> ' : '')
+      + (tags ? '<div class="flex flex-wrap gap-1 mt-2">' + tags + '</div>' : '')
+      + '<div class="bg-gray-50 rounded-lg p-2 mt-3">' + (paramsPreview || '<span class="text-xs text-gray-400">无参数</span>') + '</div>'
+      + (t.performance_notes ? '<p class="text-xs text-gray-500 mt-2 line-clamp-2">' + t.performance_notes + '</p>' : '')
+      + '</div>';
+  }).join('');
+}
+
+function showCreateParamTemplateDialog() {
+  var html = '<div id="param-overlay" class="fixed inset-0 bg-black/50 z-50 flex items-start justify-center pt-12 overflow-y-auto">'
+    + '<div class="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 mb-12">'
+    + '<div class="flex items-center justify-between px-6 py-4 border-b">'
+    + '<h2 class="text-lg font-semibold">新建参数模板</h2>'
+    + '<button onclick="document.getElementById(\'param-overlay\').remove()" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>'
+    + '</div>'
+    + '<form class="p-6 space-y-4" onsubmit="createParamTemplate(event)">'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">模板名称 *</label>'
+    + '<input name="name" required class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="GBR负荷预测-华东推荐参数"></div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">算法类型</label>'
+    + '<input name="algorithm_type" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="GradientBoosting"></div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">场景标签 (JSON)</label>'
+    + '<input name="scenario_tags" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder=\'{"region":"华东","climate":"temperate"}\'></div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">参数 (JSON) *</label>'
+    + '<textarea name="parameters" required rows="5" class="w-full px-3 py-2 border rounded-lg text-sm font-mono" placeholder=\'{"n_estimators": 200, "max_depth": 6}\'></textarea></div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">性能说明</label>'
+    + '<textarea name="performance_notes" rows="2" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="在华东2024年全年数据上训练，MAPE约2-3%"></textarea></div>'
+    + '<div class="flex justify-end gap-3 pt-2">'
+    + '<button type="button" onclick="document.getElementById(\'param-overlay\').remove()" class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg">取消</button>'
+    + '<button type="submit" class="px-4 py-2 bg-brand-600 text-white text-sm rounded-lg hover:bg-brand-700">创建</button>'
+    + '</div></form></div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function createParamTemplate(e) {
+  e.preventDefault();
+  var fd = new FormData(e.target);
+  var params, scenarioTags = null;
+  try { params = JSON.parse(fd.get('parameters')); } catch (_) {
+    showToast('参数 JSON 格式错误', 'error'); return;
+  }
+  var tagsRaw = fd.get('scenario_tags');
+  if (tagsRaw) {
+    try { scenarioTags = JSON.parse(tagsRaw); } catch (_) {
+      showToast('场景标签 JSON 格式错误', 'error'); return;
+    }
+  }
+  var body = {
+    name: fd.get('name'),
+    algorithm_type: fd.get('algorithm_type') || null,
+    scenario_tags: scenarioTags,
+    parameters: params,
+    performance_notes: fd.get('performance_notes') || null
+  };
+  try {
+    await api('/parameter-templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    var overlay = document.getElementById('param-overlay');
+    if (overlay) overlay.remove();
+    showToast('参数模板已创建');
+    loadParamTemplates();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+function showEditParamTemplateDialog(id) {
+  var t = _paramAllCache.find(function(x) { return x.id === id; });
+  if (!t) return;
+  var html = '<div id="param-overlay" class="fixed inset-0 bg-black/50 z-50 flex items-start justify-center pt-12 overflow-y-auto">'
+    + '<div class="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 mb-12">'
+    + '<div class="flex items-center justify-between px-6 py-4 border-b">'
+    + '<h2 class="text-lg font-semibold">编辑参数模板</h2>'
+    + '<button onclick="document.getElementById(\'param-overlay\').remove()" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>'
+    + '</div>'
+    + '<form class="p-6 space-y-4" onsubmit="updateParamTemplate(event,\'' + id + '\')">'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">模板名称 *</label>'
+    + '<input name="name" required class="w-full px-3 py-2 border rounded-lg text-sm" value="' + t.name + '"></div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">算法类型</label>'
+    + '<input name="algorithm_type" class="w-full px-3 py-2 border rounded-lg text-sm" value="' + (t.algorithm_type || '') + '"></div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">场景标签 (JSON)</label>'
+    + '<input name="scenario_tags" class="w-full px-3 py-2 border rounded-lg text-sm" value=\'' + (t.scenario_tags ? JSON.stringify(t.scenario_tags) : '') + '\'></div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">参数 (JSON) *</label>'
+    + '<textarea name="parameters" required rows="5" class="w-full px-3 py-2 border rounded-lg text-sm font-mono">' + JSON.stringify(t.parameters, null, 2) + '</textarea></div>'
+    + '<div><label class="block text-sm font-medium text-gray-700 mb-1">性能说明</label>'
+    + '<textarea name="performance_notes" rows="2" class="w-full px-3 py-2 border rounded-lg text-sm">' + (t.performance_notes || '') + '</textarea></div>'
+    + '<div class="flex justify-end gap-3 pt-2">'
+    + '<button type="button" onclick="document.getElementById(\'param-overlay\').remove()" class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg">取消</button>'
+    + '<button type="submit" class="px-4 py-2 bg-brand-600 text-white text-sm rounded-lg hover:bg-brand-700">保存</button>'
+    + '</div></form></div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function updateParamTemplate(e, id) {
+  e.preventDefault();
+  var fd = new FormData(e.target);
+  var params, scenarioTags = null;
+  try { params = JSON.parse(fd.get('parameters')); } catch (_) {
+    showToast('参数 JSON 格式错误', 'error'); return;
+  }
+  var tagsRaw = fd.get('scenario_tags');
+  if (tagsRaw) {
+    try { scenarioTags = JSON.parse(tagsRaw); } catch (_) {
+      showToast('场景标签 JSON 格式错误', 'error'); return;
+    }
+  }
+  var body = {
+    name: fd.get('name'),
+    algorithm_type: fd.get('algorithm_type') || null,
+    scenario_tags: scenarioTags,
+    parameters: params,
+    performance_notes: fd.get('performance_notes') || null
+  };
+  try {
+    await api('/parameter-templates/' + id, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    var overlay = document.getElementById('param-overlay');
+    if (overlay) overlay.remove();
+    showToast('参数模板已更新');
+    loadParamTemplates();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+async function deleteParamTemplate(id) {
+  if (!confirm('确定删除该参数模板？')) return;
+  try {
+    await api('/parameter-templates/' + id, { method: 'DELETE' });
+    showToast('参数模板已删除');
+    loadParamTemplates();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+// ── Parameter Comparison ──
+
+function loadCompareOptions() {
+  var leftSel = document.getElementById('compare-left');
+  var rightSel = document.getElementById('compare-right');
+  if (!leftSel || !rightSel) return;
+  var opts = '<option value="">请选择...</option>';
+  _paramAllCache.forEach(function(t) {
+    opts += '<option value="template:' + t.id + '">模板: ' + t.name + '</option>';
+  });
+  leftSel.innerHTML = opts;
+  rightSel.innerHTML = opts;
+}
+
+async function compareParams() {
+  var leftVal = document.getElementById('compare-left').value;
+  var rightVal = document.getElementById('compare-right').value;
+  if (!leftVal || !rightVal) {
+    showToast('请选择左右两侧进行对比', 'error');
+    return;
+  }
+  var leftParts = leftVal.split(':');
+  var rightParts = rightVal.split(':');
+  var body = {
+    left_type: leftParts[0],
+    left_id: leftParts[1],
+    right_type: rightParts[0],
+    right_id: rightParts[1]
+  };
+  try {
+    var resp = await api('/parameter-templates/compare', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    renderParamDiff(resp);
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+function renderParamDiff(resp) {
+  var el = document.getElementById('param-diff-result');
+  if (!el) return;
+  if (!resp.diff.length && !resp.left_only.length && !resp.right_only.length) {
+    el.innerHTML = '<p class="text-sm text-gray-500 mt-2">两个参数集完全相同</p>';
+    return;
+  }
+  var html = '<table class="w-full text-sm mt-2 border-collapse">'
+    + '<thead><tr class="bg-gray-50">'
+    + '<th class="text-left px-3 py-2 border text-gray-600">参数名</th>'
+    + '<th class="text-left px-3 py-2 border text-gray-600">' + resp.left_label + '</th>'
+    + '<th class="text-left px-3 py-2 border text-gray-600">' + resp.right_label + '</th>'
+    + '</tr></thead><tbody>';
+  resp.diff.forEach(function(d) {
+    var rowClass = d.changed ? 'bg-yellow-50' : '';
+    var lv = d.left_value !== null && d.left_value !== undefined ? String(d.left_value) : '-';
+    var rv = d.right_value !== null && d.right_value !== undefined ? String(d.right_value) : '-';
+    html += '<tr class="' + rowClass + '">'
+      + '<td class="px-3 py-1.5 border font-mono text-xs">' + d.key + '</td>'
+      + '<td class="px-3 py-1.5 border font-mono text-xs">' + lv + '</td>'
+      + '<td class="px-3 py-1.5 border font-mono text-xs">' + rv + '</td>'
+      + '</tr>';
+  });
+  resp.left_only.forEach(function(k) {
+    html += '<tr class="bg-red-50">'
+      + '<td class="px-3 py-1.5 border font-mono text-xs">' + k + '</td>'
+      + '<td class="px-3 py-1.5 border font-mono text-xs text-gray-700">有</td>'
+      + '<td class="px-3 py-1.5 border font-mono text-xs text-gray-400">-</td>'
+      + '</tr>';
+  });
+  resp.right_only.forEach(function(k) {
+    html += '<tr class="bg-blue-50">'
+      + '<td class="px-3 py-1.5 border font-mono text-xs">' + k + '</td>'
+      + '<td class="px-3 py-1.5 border font-mono text-xs text-gray-400">-</td>'
+      + '<td class="px-3 py-1.5 border font-mono text-xs text-gray-700">有</td>'
+      + '</tr>';
+  });
+  html += '</tbody></table>';
+
+  var changed = resp.diff.filter(function(d) { return d.changed; }).length;
+  var unchanged = resp.diff.filter(function(d) { return !d.changed; }).length;
+  html += '<div class="text-xs text-gray-500 mt-2">'
+    + unchanged + ' 个相同, '
+    + changed + ' 个不同, '
+    + resp.left_only.length + ' 个仅左侧, '
+    + resp.right_only.length + ' 个仅右侧'
+    + '</div>';
+
+  el.innerHTML = html;
+}
+
+// ── Recommend Template from Version Card ──
+
+async function recommendTemplate(versionId) {
+  var algoType = currentModelData ? currentModelData.algorithm_type : '';
+  var url = '/parameter-templates';
+  if (algoType) url += '?algorithm_type=' + encodeURIComponent(algoType);
+  try {
+    var templates = await api(url);
+    showRecommendTemplateOverlay(templates, versionId, algoType);
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+function showRecommendTemplateOverlay(templates, versionId, algoType) {
+  var overlay = document.getElementById('overlay-recommend-template');
+  if (overlay) overlay.remove();
+
+  var html = '<div id="overlay-recommend-template" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onclick="if(event.target===this)this.remove()">'
+    + '<div class="bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[80vh] flex flex-col">'
+    + '<div class="p-5 border-b flex items-center justify-between">'
+    + '<h3 class="font-semibold text-gray-800">推荐参数模板' + (algoType ? ' — ' + algoType : '') + '</h3>'
+    + '<button onclick="document.getElementById(\'overlay-recommend-template\').remove()" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>'
+    + '</div>'
+    + '<div class="p-5 overflow-y-auto flex-1">';
+
+  if (!templates.length) {
+    html += '<p class="text-sm text-gray-500">暂无匹配的参数模板</p>';
+  } else {
+    templates.forEach(function(t) {
+      var paramKeys = Object.keys(t.parameters || {});
+      var preview = paramKeys.slice(0, 5).map(function(k) {
+        return k + ': ' + t.parameters[k];
+      }).join(', ');
+      if (paramKeys.length > 5) preview += ', ...';
+
+      var tags = '';
+      if (t.scenario_tags) {
+        Object.keys(t.scenario_tags).forEach(function(k) {
+          tags += '<span class="px-2 py-0.5 text-xs bg-blue-50 text-blue-700 rounded-full">' + k + ': ' + t.scenario_tags[k] + '</span> ';
+        });
+      }
+
+      html += '<div class="border rounded-lg p-4 mb-3 hover:bg-gray-50">'
+        + '<div class="flex items-center justify-between mb-2">'
+        + '<h4 class="font-medium text-sm text-gray-800">' + t.name + '</h4>'
+        + (t.algorithm_type ? '<span class="px-2 py-0.5 text-xs bg-green-50 text-green-700 rounded-full">' + t.algorithm_type + '</span>' : '')
+        + '</div>'
+        + (tags ? '<div class="flex flex-wrap gap-1 mb-2">' + tags + '</div>' : '')
+        + '<div class="text-xs text-gray-500 font-mono mb-2">' + preview + '</div>'
+        + (t.performance_notes ? '<div class="text-xs text-gray-400">' + t.performance_notes + '</div>' : '')
+        + '<div class="mt-2 flex gap-2">'
+        + '<button onclick="applyTemplate(\'' + versionId + '\',\'' + t.id + '\')" class="px-3 py-1 text-xs text-white bg-brand-600 hover:bg-brand-700 rounded-lg">应用到版本</button>'
+        + '<button onclick="viewTemplateOnPage(\'' + t.id + '\')" class="px-3 py-1 text-xs text-brand-600 hover:bg-brand-50 rounded-lg border border-brand-200">查看详情</button>'
+        + '</div>'
+        + '</div>';
+    });
+  }
+
+  html += '</div></div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function applyTemplate(versionId, templateId) {
+  var template = null;
+  try {
+    template = await api('/parameter-templates/' + templateId);
+  } catch (e) { showToast(e.message, 'error'); return; }
+
+  var yamlContent = '# Applied from template: ' + template.name + '\n';
+  Object.keys(template.parameters).forEach(function(k) {
+    var v = template.parameters[k];
+    if (typeof v === 'object') {
+      yamlContent += k + ': ' + JSON.stringify(v) + '\n';
+    } else {
+      yamlContent += k + ': ' + v + '\n';
+    }
+  });
+
+  try {
+    var formData = new FormData();
+    var blob = new Blob([yamlContent], { type: 'application/x-yaml' });
+    formData.append('file', blob, 'training_params.yaml');
+    await fetch(API + '/models/' + currentModelId + '/versions/' + versionId + '/artifacts/params', {
+      method: 'POST',
+      body: formData
+    });
+    showToast('模板参数已应用');
+    var overlay = document.getElementById('overlay-recommend-template');
+    if (overlay) overlay.remove();
+    // Refresh artifacts
+    delete artifactTabCache[versionId + ':training'];
+    loadArtifacts(versionId, 'training');
+  } catch (e) { showToast('应用失败: ' + e.message, 'error'); }
+}
+
+function viewTemplateOnPage(templateId) {
+  var overlay = document.getElementById('overlay-recommend-template');
+  if (overlay) overlay.remove();
+  switchPage('params');
+  // Scroll to template after page loads
+  setTimeout(function() {
+    var card = document.querySelector('[data-template-id="' + templateId + '"]');
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, 500);
+}
+
+// ── Export / Import ──
+
+function showExportDialog() {
+  var versions = currentModelVersions || [];
+  var overlay = document.getElementById('overlay-export');
+  if (overlay) overlay.remove();
+
+  var versionCheckboxes = versions.map(function(v) {
+    return '<label class="flex items-center gap-2 text-sm">'
+      + '<input type="checkbox" class="export-version-cb" value="' + v.id + '" checked>'
+      + '<span class="font-mono">' + fmtVer(v.version) + '</span>'
+      + '<span class="text-gray-400 text-xs">' + (v.stage || '') + '</span>'
+      + '</label>';
+  }).join('');
+
+  var html = '<div id="overlay-export" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onclick="if(event.target===this)this.remove()">'
+    + '<div class="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">'
+    + '<div class="p-5 border-b flex items-center justify-between">'
+    + '<h3 class="font-semibold text-gray-800">导出模型</h3>'
+    + '<button onclick="document.getElementById(\'overlay-export\').remove()" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>'
+    + '</div>'
+    + '<div class="p-5 space-y-4">'
+    + '<div>'
+    + '<h4 class="text-sm font-medium text-gray-700 mb-2">选择版本</h4>'
+    + '<div class="space-y-2 max-h-40 overflow-y-auto">' + versionCheckboxes + '</div>'
+    + '</div>'
+    + '<label class="flex items-center gap-2 text-sm">'
+    + '<input type="checkbox" id="export-include-datasets" checked>'
+    + '<span>包含数据集</span>'
+    + '</label>'
+    + '<label class="flex items-center gap-2 text-sm">'
+    + '<input type="checkbox" id="export-include-runs">'
+    + '<span>包含运行记录</span>'
+    + '</label>'
+    + '<button onclick="doExport()" class="w-full px-4 py-2 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700">开始导出</button>'
+    + '</div></div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function doExport() {
+  var checkboxes = document.querySelectorAll('.export-version-cb:checked');
+  var versionIds = [];
+  checkboxes.forEach(function(cb) { versionIds.push(cb.value); });
+  if (!versionIds.length) {
+    showToast('请至少选择一个版本', 'error');
+    return;
+  }
+  var includeDatasets = document.getElementById('export-include-datasets').checked;
+  var includeRuns = document.getElementById('export-include-runs').checked;
+
+  var body = {
+    version_ids: versionIds,
+    include_datasets: includeDatasets,
+    include_runs: includeRuns
+  };
+
+  try {
+    showToast('正在导出...');
+    var resp = await fetch(API + '/models/' + currentModelId + '/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!resp.ok) {
+      var err = await resp.json();
+      throw new Error(err.detail || '导出失败');
+    }
+    var blob = await resp.blob();
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    var disposition = resp.headers.get('content-disposition');
+    var filename = 'model-export.zip';
+    if (disposition) {
+      var match = disposition.match(/filename="?([^"]+)"?/);
+      if (match) filename = match[1];
+    }
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('导出完成');
+    var overlay = document.getElementById('overlay-export');
+    if (overlay) overlay.remove();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+function showImportDialog() {
+  var overlay = document.getElementById('overlay-import');
+  if (overlay) overlay.remove();
+
+  var html = '<div id="overlay-import" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onclick="if(event.target===this)this.remove()">'
+    + '<div class="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4">'
+    + '<div class="p-5 border-b flex items-center justify-between">'
+    + '<h3 class="font-semibold text-gray-800">导入模型</h3>'
+    + '<button onclick="document.getElementById(\'overlay-import\').remove()" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>'
+    + '</div>'
+    + '<div class="p-5 space-y-4">'
+    + '<div>'
+    + '<label class="text-sm font-medium text-gray-700">选择 ZIP 文件</label>'
+    + '<input type="file" id="import-file" accept=".zip" class="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-brand-50 file:text-brand-700 hover:file:bg-brand-100">'
+    + '</div>'
+    + '<button onclick="previewImport()" class="w-full px-4 py-2 bg-gray-100 text-gray-700 text-sm rounded-lg hover:bg-gray-200">预览</button>'
+    + '<div id="import-preview-area"></div>'
+    + '</div></div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function previewImport() {
+  var fileInput = document.getElementById('import-file');
+  if (!fileInput.files.length) {
+    showToast('请先选择文件', 'error');
+    return;
+  }
+  var formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+
+  try {
+    var resp = await fetch(API + '/models/import/preview', {
+      method: 'POST',
+      body: formData
+    });
+    if (!resp.ok) {
+      var err = await resp.json();
+      throw new Error(err.detail || '预览失败');
+    }
+    var data = await resp.json();
+    renderImportPreview(data);
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+function renderImportPreview(data) {
+  var el = document.getElementById('import-preview-area');
+  if (!el) return;
+
+  var versionsHtml = data.versions.map(function(v) {
+    return '<li class="text-xs text-gray-600">' + v.version + ' <span class="text-gray-400">(' + (v.stage || 'unknown') + ')</span></li>';
+  }).join('');
+
+  var html = '<div class="border rounded-lg p-4 space-y-3">'
+    + '<div class="flex items-center justify-between">'
+    + '<h4 class="font-medium text-sm text-gray-800">' + data.model_name + '</h4>'
+    + (data.name_collision ? '<span class="px-2 py-0.5 text-xs bg-yellow-50 text-yellow-700 rounded-full">名称冲突</span>' : '')
+    + '</div>'
+    + '<div class="grid grid-cols-2 gap-2 text-xs text-gray-500">'
+    + '<div>算法: ' + (data.algorithm_type || '-') + '</div>'
+    + '<div>框架: ' + (data.framework || '-') + '</div>'
+    + '<div>版本数: ' + data.versions.length + '</div>'
+    + '<div>含流水线: ' + (data.has_pipeline ? '是' : '否') + '</div>'
+    + '</div>'
+    + '<ul class="list-disc pl-4">' + versionsHtml + '</ul>'
+    + '<div>'
+    + '<label class="text-xs text-gray-600">模型名称 (可修改):</label>'
+    + '<input type="text" id="import-new-name" value="' + data.suggested_name + '" class="mt-1 w-full px-3 py-1.5 border rounded-lg text-sm">'
+    + '</div>'
+    + '<button onclick="doImport()" class="w-full px-4 py-2 bg-brand-600 text-white text-sm rounded-lg hover:bg-brand-700">确认导入</button>'
+    + '</div>';
+  el.innerHTML = html;
+}
+
+async function doImport() {
+  var fileInput = document.getElementById('import-file');
+  if (!fileInput.files.length) {
+    showToast('请先选择文件', 'error');
+    return;
+  }
+  var newName = document.getElementById('import-new-name').value.trim();
+  var formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+  if (newName) formData.append('new_name', newName);
+
+  try {
+    showToast('正在导入...');
+    var resp = await fetch(API + '/models/import', {
+      method: 'POST',
+      body: formData
+    });
+    if (!resp.ok) {
+      var err = await resp.json();
+      throw new Error(err.detail || '导入失败');
+    }
+    var data = await resp.json();
+    showToast('导入成功: ' + data.name);
+    var overlay = document.getElementById('overlay-import');
+    if (overlay) overlay.remove();
+    loadModels();
+  } catch (e) { showToast(e.message, 'error'); }
 }
 
 // ── Init ──
