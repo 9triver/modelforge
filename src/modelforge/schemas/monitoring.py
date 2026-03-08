@@ -3,18 +3,12 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from modelforge.core.types import PredictionLog
 
-class PredictionLogResponse(BaseModel):
-    id: str
-    deployment_id: str
-    input_data: Any
-    output_data: Any
-    actual_value: Any | None
-    latency_ms: float
-    error: str | None
-    created_at: datetime
 
-    model_config = {"from_attributes": True}
+class PredictionLogResponse(PredictionLog):
+    """API response — inherits all fields from PredictionLog domain model."""
+    pass
 
 
 class ActualSubmission(BaseModel):

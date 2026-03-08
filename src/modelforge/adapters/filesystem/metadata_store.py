@@ -39,6 +39,41 @@ def _new_id() -> str:
     return str(uuid.uuid4())
 
 
+def _scan_artifacts(vdir: Path) -> dict[str, dict] | None:
+    """Scan a version directory and build an artifact manifest.
+
+    Returns a dict keyed by category (weights, datasets, code, features, params),
+    each value being a dict with backend/uri/size_bytes/checksum fields.
+    Returns None if no artifacts found.
+    """
+    import hashlib
+
+    categories = ("weights", "datasets", "code", "features", "params")
+    artifacts: dict[str, dict] = {}
+    for cat in categories:
+        cat_dir = vdir / cat
+        if not cat_dir.exists():
+            continue
+        files = [f for f in cat_dir.rglob("*") if f.is_file()]
+        if not files:
+            continue
+        total_size = sum(f.stat().st_size for f in files)
+        # For single-file categories, record file-level checksum
+        checksum = None
+        uri = cat + "/"
+        if len(files) == 1:
+            uri = str(files[0].relative_to(vdir))
+            sha = hashlib.sha256(files[0].read_bytes()).hexdigest()
+            checksum = "sha256:" + sha
+        artifacts[cat] = {
+            "backend": "local",
+            "uri": uri,
+            "size_bytes": total_size,
+            "checksum": checksum,
+        }
+    return artifacts if artifacts else None
+
+
 def slugify(name: str) -> str:
     """Convert a model name (possibly Chinese) to a filesystem-safe slug."""
     try:
@@ -582,6 +617,30 @@ class YAMLMetadataStore:
         version_data["asset_id"] = model_id
         return version_data
 
+    def refresh_artifacts(self, model_id: str, version_id: str) -> dict:
+        """Rescan the version directory and update the artifact manifest.
+
+        Call this after populating artifact subdirectories (weights, datasets,
+        code, features, params) to persist the manifest in version.yaml.
+
+        Returns the updated version dict (→ ModelVersion).
+        """
+        from fastapi import HTTPException
+
+        result = self.find_version_globally(version_id)
+        if result is None:
+            raise HTTPException(404, "Version not found")
+        _, slug, version_str, version_data = result
+
+        vdir = self._version_dir(slug, version_str)
+        artifacts = _scan_artifacts(vdir)
+        version_data["artifacts"] = artifacts
+        version_data["updated_at"] = _now_str()
+        YAMLFile.write(vdir / "version.yaml", version_data)
+
+        version_data["asset_id"] = model_id
+        return version_data
+
     def create_version_from_run(
         self,
         model_id: str,
@@ -609,6 +668,7 @@ class YAMLMetadataStore:
             "stage": "development",
             "parent_version_id": parent_version_id,
             "source_model_id": source_model_id,
+            "artifacts": _scan_artifacts(vdir),
             "created_at": now,
             "updated_at": now,
         }
@@ -927,6 +987,97 @@ class YAMLMetadataStore:
             "total_rows": total_rows,
             "offset": offset,
             "limit": limit,
+        }
+
+    def preview_images(
+        self,
+        model_id: str,
+        version_id: str,
+        count: int = 36,
+        offset: int = 0,
+    ) -> dict:
+        """Parse IDX-format image files and return base64 PNG thumbnails."""
+        from fastapi import HTTPException
+
+        _, _, vdir = self._resolve_version_dir(model_id, version_id)
+        ds_dir = vdir / "datasets"
+        if not ds_dir.exists():
+            return {"type": "none"}
+
+        # Find IDX image and label files
+        img_files = sorted(ds_dir.rglob("*-images-idx3-ubyte"))
+        if not img_files:
+            return {"type": "none"}
+
+        lbl_files = sorted(ds_dir.rglob("*-labels-idx1-ubyte"))
+
+        # Read metadata from data.yaml if available
+        meta_path = ds_dir / "data.yaml"
+        metadata = {}
+        if meta_path.exists():
+            metadata = YAMLFile.read(meta_path)
+
+        # Parse first image file
+        import base64
+        import io
+        import struct
+
+        try:
+            from PIL import Image
+        except ImportError:
+            raise HTTPException(
+                500, "Pillow not installed"
+            )
+
+        img_path = img_files[0]
+        images = []
+        total = 0
+
+        with open(img_path, "rb") as f:
+            magic, total, rows, cols = struct.unpack(
+                ">4I", f.read(16)
+            )
+            if magic != 2051:
+                return {"type": "none"}
+
+            # Read labels if available
+            labels = None
+            if lbl_files:
+                with open(lbl_files[0], "rb") as lf:
+                    lm, ln = struct.unpack(">2I", lf.read(8))
+                    if lm == 2049:
+                        labels = lf.read(ln)
+
+            # Skip to offset
+            pixel_size = rows * cols
+            f.seek(16 + offset * pixel_size)
+
+            actual = min(count, total - offset)
+            for i in range(actual):
+                pixels = f.read(pixel_size)
+                if len(pixels) < pixel_size:
+                    break
+                img = Image.frombytes("L", (cols, rows), pixels)
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                b64 = base64.b64encode(
+                    buf.getvalue()
+                ).decode("ascii")
+                label = None
+                if labels and (offset + i) < len(labels):
+                    label = labels[offset + i]
+                images.append({
+                    "data": "data:image/png;base64," + b64,
+                    "label": label,
+                })
+
+        return {
+            "type": "image_grid",
+            "metadata": metadata,
+            "images": images,
+            "total": total,
+            "offset": offset,
+            "count": len(images),
         }
 
     def _validate_artifact_filename(self, filename: str) -> None:

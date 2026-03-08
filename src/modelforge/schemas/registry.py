@@ -1,8 +1,8 @@
-from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from modelforge.core.types import ModelAsset, ModelVersion
 from modelforge.enums import AssetStatus, VersionStage
 
 # ── ModelAsset Schemas ──
@@ -36,25 +36,9 @@ class ModelAssetUpdate(BaseModel):
     output_schema: dict[str, Any] | None = None
 
 
-class ModelAssetResponse(BaseModel):
-    id: str
-    name: str
-    description: str | None
-    task_type: str
-    algorithm_type: str
-    framework: str
-    owner_org: str
-    status: AssetStatus
-    tags: list[str] | None
-    applicable_scenarios: dict[str, Any] | None
-    algorithm_description: str | None
-    input_schema: dict[str, Any] | None
-    output_schema: dict[str, Any] | None
-    created_at: datetime
-    updated_at: datetime
-    version_count: int = 0
-
-    model_config = {"from_attributes": True}
+class ModelAssetResponse(ModelAsset):
+    """API response — inherits all fields from ModelAsset domain model."""
+    pass
 
 
 class StatusTransition(BaseModel):
@@ -79,22 +63,9 @@ class DraftVersionRequest(BaseModel):
     description: str | None = None
 
 
-class ModelVersionResponse(BaseModel):
-    id: str
-    asset_id: str
-    version: str
-    file_path: str | None
-    file_format: str
-    file_size_bytes: int | None
-    metrics: dict[str, Any] | None
-    stage: VersionStage
-    parent_version_id: str | None
-    source_model_id: str | None = None
-    description: str | None
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = {"from_attributes": True}
+class ModelVersionResponse(ModelVersion):
+    """API response — inherits all fields from ModelVersion domain model."""
+    pass
 
 
 class StageTransition(BaseModel):

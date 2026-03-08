@@ -1,61 +1,45 @@
 """Core domain layer — protocols, types, and dependency injection.
 
-This package defines the abstract interfaces (Protocols) that all backend
-implementations must satisfy.  The platform's API and service layers depend
-only on these protocols, never on concrete implementations.
+This package defines the abstract interfaces (Protocols) and domain models
+that represent every entity in the platform.
 
 Usage::
 
-    from modelforge.core import get_metadata_store, get_artifact_store
+    from modelforge.core import ModelAsset, ModelVersion, get_metadata_store
 """
 
 from modelforge.core.protocols import (
-    ArtifactStore,
-    ArtifactType,
-    DatasetManager,
-    Evaluator,
-    JobState,
-    LineageEventType,
     MetadataStore,
-    Modality,
     ModelRunner,
     TrainingBackend,
 )
 from modelforge.core.types import (
-    ArtifactRef,
-    CheckpointPolicy,
-    ColumnDef,
-    DatasetSchema,
-    EnvironmentSpec,
-    ImageSpec,
-    IOSpec,
-    PreprocessConfig,
-    TrainingJob,
+    ArtifactLocation,
+    Deployment,
+    FeatureDefinition,
+    FeatureGroup,
+    ModelAsset,
+    ModelVersion,
+    ParameterTemplate,
+    PipelineRun,
+    PredictionLog,
 )
 
 __all__ = [
     # Protocols
-    "ArtifactStore",
     "MetadataStore",
-    "DatasetManager",
     "TrainingBackend",
     "ModelRunner",
-    "Evaluator",
-    # Enums
-    "ArtifactType",
-    "LineageEventType",
-    "JobState",
-    "Modality",
-    # Types
-    "ArtifactRef",
-    "ColumnDef",
-    "ImageSpec",
-    "DatasetSchema",
-    "EnvironmentSpec",
-    "CheckpointPolicy",
-    "TrainingJob",
-    "IOSpec",
-    "PreprocessConfig",
+    # Domain models
+    "ArtifactLocation",
+    "ModelAsset",
+    "ModelVersion",
+    "Deployment",
+    "PipelineRun",
+    "PredictionLog",
+    "FeatureDefinition",
+    "FeatureGroup",
+    "ParameterTemplate",
     # DI
     "get_metadata_store",
     "get_artifact_store",

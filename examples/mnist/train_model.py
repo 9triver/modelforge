@@ -1,7 +1,7 @@
 """Train a simple CNN on MNIST digit recognition.
 
 Pipeline inputs (from version artifact directories):
-  datasets/                        <- MNIST data (auto-downloaded)
+  datasets/MNIST/raw/              <- MNIST binary data (local)
   params/training_params.yaml      <- hyperparameters
 
 Pipeline outputs:
@@ -18,7 +18,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
-DEVICE = torch.device("cpu")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class SimpleCNN(nn.Module):
@@ -61,6 +61,7 @@ def train(
             params.update(cfg["parameters"])
         print("[训练配置] 从 " + params_path + " 加载参数")
     print("[训练配置] " + str(params))
+    print("[训练配置] 设备: " + str(DEVICE))
 
     # -- 2. Load MNIST data --
     transform = transforms.Compose([
@@ -70,10 +71,10 @@ def train(
 
     Path(data_dir).mkdir(parents=True, exist_ok=True)
     train_dataset = datasets.MNIST(
-        data_dir, train=True, download=True, transform=transform,
+        data_dir, train=True, download=False, transform=transform,
     )
     test_dataset = datasets.MNIST(
-        data_dir, train=False, download=True, transform=transform,
+        data_dir, train=False, download=False, transform=transform,
     )
 
     train_loader = DataLoader(
@@ -146,6 +147,7 @@ def train(
     # -- 5. Save model --
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     # Save as TorchScript for portable deployment (no class definition needed)
+    model.cpu()
     scripted = torch.jit.script(model)
     scripted.save(output_path)
     print("[模型产出] 权重已保存 (TorchScript): " + output_path)

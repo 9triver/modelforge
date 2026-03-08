@@ -1,7 +1,8 @@
-from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+from modelforge.core.types import ParameterTemplate
 
 
 class ParameterTemplateCreate(BaseModel):
@@ -22,18 +23,9 @@ class ParameterTemplateUpdate(BaseModel):
     performance_notes: str | None = None
 
 
-class ParameterTemplateResponse(BaseModel):
-    id: str
-    name: str
-    model_asset_id: str | None
-    algorithm_type: str | None
-    scenario_tags: dict[str, Any] | None
-    parameters: dict[str, Any]
-    performance_notes: str | None
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = {"from_attributes": True}
+class ParameterTemplateResponse(ParameterTemplate):
+    """API response — inherits all fields from ParameterTemplate domain model."""
+    pass
 
 
 # ── Parameter Comparison ──

@@ -411,93 +411,108 @@ function findParentVersionStr(parentId) {
 // ── Sub-tab: Versions ──
 
 let expandedVersionId = null;
-let activePipelineStage = 'data_prep';
+let activeArtifactTab = 'weights';
 let artifactTabCache = {};
 
-const pipelineStages = [
-  { key: 'data_prep', label: '数据准备', step: '①',
-    categories: ['datasets', 'features'],
-    categoryLabels: { datasets: '📊 数据集', features: '📋 特征定义' } },
-  { key: 'training', label: '训练配置', step: '②',
-    categories: ['code', 'params'],
-    categoryLabels: { code: '💻 训练代码', params: '⚙ 超参数' } },
-  { key: 'output', label: '模型产出', step: '③',
-    categories: [],
-    categoryLabels: {} },
+var artifactTabs = [
+  { key: 'weights',  label: '权重',  icon: '\uD83D\uDCE6', category: null },
+  { key: 'datasets', label: '数据集', icon: '\uD83D\uDCCA', category: 'datasets' },
+  { key: 'code',     label: '代码',  icon: '\uD83D\uDCBB', category: 'code' },
+  { key: 'features', label: '特征',  icon: '\uD83D\uDCCB', category: 'features' },
+  { key: 'params',   label: '参数',  icon: '\u2699\uFE0F',  category: 'params' },
 ];
 
 function renderVersionsTab() {
-  const versions = currentModelVersions;
-  const el = document.getElementById('subtab-content');
+  var versions = currentModelVersions;
+  var el = document.getElementById('subtab-content');
 
   // Default expand the first version
   if (expandedVersionId === null && versions.length) {
     expandedVersionId = versions[0].id;
   }
 
-  el.innerHTML = `
-    <div class="flex items-center justify-between mb-4">
-      <h3 class="text-sm font-medium text-gray-700">模型版本 (${versions.length})</h3>
-      <div class="flex gap-2">
-        <button onclick="showCreateDraftDialog()" class="px-3 py-1.5 bg-amber-500 text-white text-xs rounded-lg hover:bg-amber-600">+ 准备新版本</button>
-        <button onclick="document.getElementById('upload-asset-id').value='${currentModelId}';showModal('upload-version')" class="px-3 py-1.5 bg-brand-600 text-white text-xs rounded-lg hover:bg-brand-700">+ 上传版本</button>
-      </div>
-    </div>
-    ${versions.length ? `<div class="space-y-3">${versions.map(v => {
-      const isExpanded = expandedVersionId === v.id;
-      return `
-      <div class="bg-white rounded-xl border overflow-hidden">
-        <div class="p-5 cursor-pointer hover:bg-gray-50/50 transition" onclick="toggleArtifacts('${v.id}')">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-3">
-              <svg class="w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-              </svg>
-              <span class="font-mono text-sm font-semibold">${fmtVer(v.version)}</span>
-              ${badge(v.stage)}
-              ${v.parent_version_id ? `<span class="text-xs text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">\u2190 ${findParentVersionStr(v.parent_version_id)}</span>` : ''}
-              ${v.source_model_id ? '<span class="text-xs text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">\u2442 Fork</span>' : ''}
-              <span class="text-xs text-gray-400">${v.stage === 'draft' ? '待训练' : formatBytes(v.file_size_bytes)}</span>
-              <span class="text-xs text-gray-400">${v.stage === 'draft' ? '' : v.file_format}</span>
-            </div>
-            <span class="text-xs text-gray-400">${formatTime(v.created_at)}</span>
-          </div>
-          ${v.description ? `<p class="text-sm text-gray-500 mt-2 ml-7">${v.description}</p>` : ''}
-          ${v.metrics ? `
-            <div class="flex flex-wrap gap-4 mt-2 ml-7">
-              ${Object.entries(v.metrics).map(([k, val]) =>
-                `<div class="text-sm"><span class="text-gray-500">${k}:</span> <span class="font-medium">${typeof val === 'number' ? val.toFixed(2) : val}</span></div>`
-              ).join('')}
-            </div>
-          ` : ''}
-        </div>
-        <div id="artifacts-panel-${v.id}" class="${isExpanded ? '' : 'hidden'}">
-          <div class="border-t">
-            <div class="flex items-stretch gap-0 p-4 bg-gray-50/50">
-              ${pipelineStages.map((s, i) => `
-                ${i > 0 ? '<div class="flex items-center px-2 text-gray-300 text-lg flex-shrink-0">→</div>' : ''}
-                <button onclick="event.stopPropagation();switchPipelineStage('${v.id}','${s.key}')"
-                  id="stage-${s.key}-${v.id}"
-                  class="flex-1 p-3 rounded-lg border-2 text-left cursor-pointer transition
-                    ${activePipelineStage === s.key && isExpanded
-                      ? 'border-brand-500 bg-white shadow-sm'
-                      : 'border-transparent bg-white/60 hover:bg-white hover:border-gray-200'}">
-                  <div class="text-xs font-semibold ${activePipelineStage === s.key && isExpanded ? 'text-brand-700' : 'text-gray-700'}">${s.step} ${s.label}</div>
-                  <div class="text-[10px] mt-1 ${activePipelineStage === s.key && isExpanded ? 'text-brand-500' : 'text-gray-400'}">
-                    ${s.categories.length ? Object.values(s.categoryLabels).join(' · ') : '📦 权重文件 · 指标'}
-                  </div>
-                </button>
-              `).join('')}
-            </div>
-            <div id="stage-content-${v.id}" class="p-4 min-h-[200px]"></div>
-          </div>
-        </div>
-      </div>`;
-    }).join('')}</div>` : '<div class="text-sm text-gray-400 py-12 text-center">暂无版本</div>'}
-  `;
+  var header =
+    '<div class="flex items-center justify-between mb-4">' +
+      '<h3 class="text-sm font-medium text-gray-700">模型版本 (' + versions.length + ')</h3>' +
+      '<div class="flex gap-2">' +
+        '<button onclick="showCreateDraftDialog()" class="px-3 py-1.5 bg-amber-500 text-white text-xs rounded-lg hover:bg-amber-600">+ 准备新版本</button>' +
+        '<button onclick="document.getElementById(\'upload-asset-id\').value=\'' + currentModelId + '\';showModal(\'upload-version\')" class="px-3 py-1.5 bg-brand-600 text-white text-xs rounded-lg hover:bg-brand-700">+ 上传版本</button>' +
+      '</div>' +
+    '</div>';
 
-  // Load the active stage for the expanded version
-  if (expandedVersionId) loadPipelineStage(expandedVersionId, activePipelineStage);
+  if (!versions.length) {
+    el.innerHTML = header + '<div class="text-sm text-gray-400 py-12 text-center">暂无版本</div>';
+    return;
+  }
+
+  var cards = versions.map(function(v) {
+    var isExpanded = expandedVersionId === v.id;
+    var chevronCls = isExpanded ? 'rotate-90' : '';
+    var parentBadge = v.parent_version_id
+      ? '<span class="text-xs text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">\u2190 ' + findParentVersionStr(v.parent_version_id) + '</span>'
+      : '';
+    var forkBadge = v.source_model_id
+      ? '<span class="text-xs text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">\u2442 Fork</span>'
+      : '';
+    var sizeLabel = v.stage === 'draft' ? '待训练' : formatBytes(v.file_size_bytes);
+    var fmtLabel = v.stage === 'draft' ? '' : v.file_format;
+    var descHtml = v.description
+      ? '<p class="text-sm text-gray-500 mt-2 ml-7">' + v.description + '</p>'
+      : '';
+    var metricsHtml = '';
+    if (v.metrics) {
+      metricsHtml = '<div class="flex flex-wrap gap-4 mt-2 ml-7">' +
+        Object.entries(v.metrics).map(function(e) {
+          var k = e[0], val = e[1];
+          return '<div class="text-sm"><span class="text-gray-500">' + k + ':</span> <span class="font-medium">' + (typeof val === 'number' ? val.toFixed(2) : val) + '</span></div>';
+        }).join('') +
+      '</div>';
+    }
+
+    // Build artifact tab bar
+    var tabBar = artifactTabs.map(function(tab) {
+      var isActive = activeArtifactTab === tab.key && isExpanded;
+      var btnCls = isActive
+        ? 'border-brand-500 bg-white shadow-sm text-brand-700'
+        : 'border-transparent bg-white/60 hover:bg-white hover:border-gray-200 text-gray-600';
+      return '<button onclick="event.stopPropagation();switchArtifactTab(\'' + v.id + '\',\'' + tab.key + '\')"' +
+        ' id="atab-' + tab.key + '-' + v.id + '"' +
+        ' class="px-4 py-2.5 rounded-lg border-2 text-xs font-medium cursor-pointer transition ' + btnCls + '">' +
+        tab.icon + ' ' + tab.label +
+        '</button>';
+    }).join('');
+
+    return '<div class="bg-white rounded-xl border overflow-hidden">' +
+      '<div class="p-5 cursor-pointer hover:bg-gray-50/50 transition" onclick="toggleArtifacts(\'' + v.id + '\')">' +
+        '<div class="flex items-center justify-between">' +
+          '<div class="flex items-center gap-3">' +
+            '<svg class="w-4 h-4 text-gray-400 transition-transform ' + chevronCls + '" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
+              '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>' +
+            '</svg>' +
+            '<span class="font-mono text-sm font-semibold">' + fmtVer(v.version) + '</span>' +
+            badge(v.stage) +
+            parentBadge +
+            forkBadge +
+            '<span class="text-xs text-gray-400">' + sizeLabel + '</span>' +
+            '<span class="text-xs text-gray-400">' + fmtLabel + '</span>' +
+          '</div>' +
+          '<span class="text-xs text-gray-400">' + formatTime(v.created_at) + '</span>' +
+        '</div>' +
+        descHtml + metricsHtml +
+      '</div>' +
+      '<div id="artifacts-panel-' + v.id + '" class="' + (isExpanded ? '' : 'hidden') + '">' +
+        '<div class="border-t">' +
+          '<div class="flex items-center gap-2 p-3 bg-gray-50/50 flex-wrap">' + tabBar + '</div>' +
+          '<div id="tab-content-' + v.id + '" class="p-4 min-h-[200px]"></div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  el.innerHTML = header + '<div class="space-y-3">' + cards + '</div>';
+
+  // Load the active tab for the expanded version
+  if (expandedVersionId) loadArtifactTab(expandedVersionId, activeArtifactTab);
 }
 
 function toggleArtifacts(versionId) {
@@ -505,117 +520,110 @@ function toggleArtifacts(versionId) {
     expandedVersionId = null;
   } else {
     expandedVersionId = versionId;
-    activePipelineStage = 'data_prep';
+    activeArtifactTab = 'weights';
     artifactTabCache = {};
   }
   renderVersionsTab();
 }
 
-function switchPipelineStage(versionId, stageKey) {
-  activePipelineStage = stageKey;
-  pipelineStages.forEach(s => {
-    const btn = document.getElementById('stage-' + s.key + '-' + versionId);
+function switchArtifactTab(versionId, tabKey) {
+  activeArtifactTab = tabKey;
+  artifactTabs.forEach(function(tab) {
+    var btn = document.getElementById('atab-' + tab.key + '-' + versionId);
     if (!btn) return;
-    const title = btn.querySelector('div:first-child');
-    const sub = btn.querySelector('div:last-child');
-    if (s.key === stageKey) {
-      btn.classList.remove('border-transparent', 'bg-white/60', 'hover:bg-white', 'hover:border-gray-200');
-      btn.classList.add('border-brand-500', 'bg-white', 'shadow-sm');
-      title.classList.replace('text-gray-700', 'text-brand-700');
-      sub.classList.replace('text-gray-400', 'text-brand-500');
+    if (tab.key === tabKey) {
+      btn.className = btn.className
+        .replace('border-transparent', 'border-brand-500')
+        .replace('bg-white/60', 'bg-white')
+        .replace('hover:bg-white', '')
+        .replace('hover:border-gray-200', '')
+        .replace('text-gray-600', 'text-brand-700');
+      if (btn.className.indexOf('shadow-sm') < 0) btn.className += ' shadow-sm';
     } else {
-      btn.classList.add('border-transparent', 'bg-white/60', 'hover:bg-white', 'hover:border-gray-200');
-      btn.classList.remove('border-brand-500', 'bg-white', 'shadow-sm');
-      title.classList.replace('text-brand-700', 'text-gray-700');
-      sub.classList.replace('text-brand-500', 'text-gray-400');
+      btn.className = btn.className
+        .replace('border-brand-500', 'border-transparent')
+        .replace('shadow-sm', '')
+        .replace('text-brand-700', 'text-gray-600');
+      if (btn.className.indexOf('bg-white/60') < 0) {
+        btn.className = btn.className.replace(/\bbg-white\b/, 'bg-white/60');
+      }
+      if (btn.className.indexOf('hover:bg-white') < 0) btn.className += ' hover:bg-white hover:border-gray-200';
     }
   });
-  loadPipelineStage(versionId, stageKey);
+  loadArtifactTab(versionId, tabKey);
 }
 
-async function loadPipelineStage(versionId, stageKey) {
-  const container = document.getElementById('stage-content-' + versionId);
+async function loadArtifactTab(versionId, tabKey) {
+  var container = document.getElementById('tab-content-' + versionId);
   if (!container) return;
 
-  const cacheKey = versionId + ':' + stageKey;
-
+  var cacheKey = versionId + ':' + tabKey;
   if (artifactTabCache[cacheKey]) {
-    renderStageContent(container, stageKey, artifactTabCache[cacheKey], versionId);
+    renderArtifactTabContent(container, tabKey, artifactTabCache[cacheKey], versionId);
     return;
   }
 
-  const stage = pipelineStages.find(s => s.key === stageKey);
-
-  // Output stage: render from version object, no API call
-  if (stageKey === 'output') {
-    const version = currentModelVersions.find(v => v.id === versionId);
-    const data = { version };
-    artifactTabCache[cacheKey] = data;
-    renderStageContent(container, stageKey, data, versionId);
+  // Weights tab: render from version object, no API call
+  if (tabKey === 'weights') {
+    var version = currentModelVersions.find(function(v) { return v.id === versionId; });
+    var wData = { version: version };
+    artifactTabCache[cacheKey] = wData;
+    renderArtifactTabContent(container, tabKey, wData, versionId);
     return;
   }
 
   container.innerHTML = '<div class="text-xs text-gray-400 py-8 text-center">加载中...</div>';
 
   try {
-    const base = `/models/${currentModelId}/versions/${versionId}`;
-    const results = await Promise.all(
-      stage.categories.map(cat => api(base + '/artifacts/' + cat).catch(() => []))
-    );
-    const filesMap = {};
-    stage.categories.forEach((cat, i) => { filesMap[cat] = results[i]; });
-    artifactTabCache[cacheKey] = filesMap;
-    renderStageContent(container, stageKey, filesMap, versionId);
+    var base = '/models/' + currentModelId + '/versions/' + versionId;
+    var tab = artifactTabs.find(function(t) { return t.key === tabKey; });
+    var files = await api(base + '/artifacts/' + tab.category).catch(function() { return []; });
+    artifactTabCache[cacheKey] = files;
+    renderArtifactTabContent(container, tabKey, files, versionId);
   } catch (e) {
-    container.innerHTML = `<div class="text-xs text-red-500 py-8 text-center">${e.message}</div>`;
+    container.innerHTML = '<div class="text-xs text-red-500 py-8 text-center">' + e.message + '</div>';
   }
 }
 
-function renderStageContent(container, stageKey, data, versionId) {
-  // Output stage: show model weights + metrics
-  if (stageKey === 'output') {
-    const v = data.version;
+function renderArtifactTabContent(container, tabKey, data, versionId) {
+  // ── Weights tab ──
+  if (tabKey === 'weights') {
+    var v = data.version;
 
-    // Draft version: show training prompt instead of weights
+    // Draft version: show training prompt
     if (v.stage === 'draft') {
-      container.innerHTML = `
-        <div class="text-center py-8">
-          <div class="text-amber-400 text-4xl mb-3">&#9881;</div>
-          <h4 class="text-sm font-medium text-gray-700 mb-2">草稿版本 — 尚未训练</h4>
-          <p class="text-xs text-gray-500 mb-4">请在前两个阶段准备好数据和训练配置，然后点击下方按钮开始训练</p>
-          <button onclick="startDraftTraining('${v.version}')"
-            class="px-6 py-2.5 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 font-medium">
-            开始训练
-          </button>
-          <button onclick="archiveDraft('${v.id}')"
-            class="ml-3 px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg border border-red-200">
-            废弃草稿
-          </button>
-        </div>`;
+      container.innerHTML =
+        '<div class="text-center py-8">' +
+          '<div class="text-amber-400 text-4xl mb-3">&#9881;</div>' +
+          '<h4 class="text-sm font-medium text-gray-700 mb-2">草稿版本 — 尚未训练</h4>' +
+          '<p class="text-xs text-gray-500 mb-4">请在其他 Tab 中准备好数据和训练配置，然后点击下方按钮开始训练</p>' +
+          '<button onclick="startDraftTraining(\'' + v.version + '\')"' +
+            ' class="px-6 py-2.5 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 font-medium">' +
+            '开始训练</button>' +
+          '<button onclick="archiveDraft(\'' + v.id + '\')"' +
+            ' class="ml-3 px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg border border-red-200">' +
+            '废弃草稿</button>' +
+        '</div>';
       return;
     }
 
-    // Build adaptation guidance banner if pending (scoped to exact forked version)
-    let guideBannerHtml = '';
+    // Build adaptation guidance banner
+    var guideBannerHtml = '';
     if (pendingAdaptGuide && pendingAdaptGuide.versionId === v.id && pendingAdaptGuide.data && pendingAdaptGuide.data.diagnosis) {
-      const diag = pendingAdaptGuide.data.diagnosis;
-      const recs = diag.recommendations || [];
-      const drifted = (diag.drift_report || []).filter(f => f.psi_severity !== 'none');
+      var diag = pendingAdaptGuide.data.diagnosis;
+      var recs = diag.recommendations || [];
+      var drifted = (diag.drift_report || []).filter(function(f) { return f.psi_severity !== 'none'; });
 
-      let recListHtml = recs.map(function(r) {
+      var recListHtml = recs.map(function(r) {
         var icons = { critical: '&#10007;', warning: '&#9888;', info: '&#8505;' };
-        var colors = {
-          critical: 'text-red-700',
-          warning: 'text-yellow-700',
-          info: 'text-blue-700',
-        };
+        var colors = { critical: 'text-red-700', warning: 'text-yellow-700', info: 'text-blue-700' };
         var c = colors[r.severity] || colors.info;
         return '<li class="flex gap-1.5 ' + c + '">' +
           '<span class="flex-shrink-0">' + (icons[r.severity] || '') + '</span>' +
           '<span>' + r.message + '</span></li>';
       }).join('');
 
-      let driftHtml = '';
+      var driftHtml = '';
       if (drifted.length) {
         var driftItems = drifted.slice(0, 5).map(function(f) {
           return '<span class="px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] rounded-full">' +
@@ -624,13 +632,13 @@ function renderStageContent(container, stageKey, data, versionId) {
         driftHtml = '<div class="mt-2"><span class="text-xs text-gray-500">漂移特征: </span>' + driftItems + '</div>';
       }
 
-      let stepsHtml =
+      var stepsHtml =
         '<div class="mt-3 flex flex-wrap gap-2">' +
-          '<span class="px-2.5 py-1 bg-white border rounded-lg text-xs text-gray-700 font-medium">① 上传本地数据</span>' +
-          '<span class="text-gray-300 flex items-center">→</span>' +
-          '<span class="px-2.5 py-1 bg-white border rounded-lg text-xs text-gray-700 font-medium">② 调整特征定义</span>' +
-          '<span class="text-gray-300 flex items-center">→</span>' +
-          '<span class="px-2.5 py-1 bg-white border rounded-lg text-xs text-gray-700 font-medium">③ 重新训练</span>' +
+          '<span class="px-2.5 py-1 bg-white border rounded-lg text-xs text-gray-700 font-medium">\u2460 上传本地数据</span>' +
+          '<span class="text-gray-300 flex items-center">\u2192</span>' +
+          '<span class="px-2.5 py-1 bg-white border rounded-lg text-xs text-gray-700 font-medium">\u2461 调整特征定义</span>' +
+          '<span class="text-gray-300 flex items-center">\u2192</span>' +
+          '<span class="px-2.5 py-1 bg-white border rounded-lg text-xs text-gray-700 font-medium">\u2462 重新训练</span>' +
         '</div>';
 
       guideBannerHtml =
@@ -638,121 +646,239 @@ function renderStageContent(container, stageKey, data, versionId) {
           '<button onclick="dismissAdaptGuide()" class="absolute top-2 right-2 text-indigo-300 hover:text-indigo-500 text-sm" title="关闭">&#10005;</button>' +
           '<h4 class="text-sm font-semibold text-indigo-800 mb-2">适配指南 — 试评估诊断结果</h4>' +
           '<ul class="space-y-1 text-xs leading-relaxed">' + recListHtml + '</ul>' +
-          driftHtml +
-          stepsHtml +
+          driftHtml + stepsHtml +
         '</div>';
     }
 
-    container.innerHTML = `
-      <div class="space-y-4">
-        ${guideBannerHtml}
-        <div class="bg-gray-50 rounded-lg p-4">
-          <h4 class="text-xs font-semibold text-gray-700 mb-3">📦 模型权重</h4>
-          <div class="flex flex-wrap gap-4 text-sm">
-            <div><span class="text-gray-500">格式:</span> <span class="font-medium">${v.file_format}</span></div>
-            <div><span class="text-gray-500">大小:</span> <span class="font-medium">${formatBytes(v.file_size_bytes)}</span></div>
-            ${v.file_path ? `<div><span class="text-gray-500">路径:</span> <span class="font-mono text-xs">${v.file_path}</span></div>` : ''}
-          </div>
-        </div>
-        ${v.metrics && Object.keys(v.metrics).length ? `
-          <div class="bg-gray-50 rounded-lg p-4">
-            <h4 class="text-xs font-semibold text-gray-700 mb-3">📊 评估指标</h4>
-            <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              ${Object.entries(v.metrics).map(([k, val]) => `
-                <div class="bg-white rounded-lg p-3 border">
-                  <div class="text-xs text-gray-500">${k}</div>
-                  <div class="text-lg font-semibold text-gray-900 mt-1">${typeof val === 'number' ? val.toFixed(4) : val}</div>
-                </div>
-              `).join('')}
-            </div>
-          </div>
-        ` : '<div class="text-xs text-gray-400 py-8 text-center">暂无评估指标</div>'}
-        <div class="flex justify-end gap-2 pt-2">
-          <button onclick="showRetrain('${versionId}')"
-            class="px-4 py-2 text-sm text-green-600 hover:bg-green-50 rounded-lg border border-green-200 font-medium">
-            重新训练
-          </button>
-          <button onclick="showTrialEvaluate('${versionId}')"
-            class="px-4 py-2 text-sm text-brand-600 hover:bg-brand-50 rounded-lg border border-brand-200 font-medium">
-            试评估
-          </button>
-        </div>
-      </div>
-    `;
+    // Metrics display
+    var metricsSection = '';
+    if (v.metrics && Object.keys(v.metrics).length) {
+      var metricCards = Object.entries(v.metrics).map(function(e) {
+        var k = e[0], val = e[1];
+        return '<div class="bg-white rounded-lg p-3 border">' +
+          '<div class="text-xs text-gray-500">' + k + '</div>' +
+          '<div class="text-lg font-semibold text-gray-900 mt-1">' + (typeof val === 'number' ? val.toFixed(4) : val) + '</div>' +
+        '</div>';
+      }).join('');
+      metricsSection =
+        '<div class="bg-gray-50 rounded-lg p-4">' +
+          '<h4 class="text-xs font-semibold text-gray-700 mb-3">\uD83D\uDCCA 评估指标</h4>' +
+          '<div class="grid grid-cols-2 sm:grid-cols-3 gap-3">' + metricCards + '</div>' +
+        '</div>';
+    } else {
+      metricsSection = '<div class="text-xs text-gray-400 py-4 text-center">暂无评估指标</div>';
+    }
+
+    var downloadUrl = API + '/models/' + currentModelId + '/versions/' + versionId + '/download';
+    container.innerHTML =
+      '<div class="space-y-4">' +
+        guideBannerHtml +
+        '<div class="bg-gray-50 rounded-lg p-4">' +
+          '<h4 class="text-xs font-semibold text-gray-700 mb-3">\uD83D\uDCE6 模型权重</h4>' +
+          '<div class="flex flex-wrap gap-4 text-sm">' +
+            '<div><span class="text-gray-500">格式:</span> <span class="font-medium">' + v.file_format + '</span></div>' +
+            '<div><span class="text-gray-500">大小:</span> <span class="font-medium">' + formatBytes(v.file_size_bytes) + '</span></div>' +
+            (v.file_path ? '<div><span class="text-gray-500">路径:</span> <span class="font-mono text-xs">' + v.file_path + '</span></div>' : '') +
+          '</div>' +
+          '<div class="mt-3"><a href="' + downloadUrl + '" class="px-3 py-1.5 text-xs text-brand-600 hover:bg-brand-50 rounded-lg border border-brand-200 inline-block">下载权重文件</a></div>' +
+        '</div>' +
+        metricsSection +
+        '<div class="flex justify-end gap-2 pt-2">' +
+          '<button onclick="showRetrain(\'' + versionId + '\')"' +
+            ' class="px-4 py-2 text-sm text-green-600 hover:bg-green-50 rounded-lg border border-green-200 font-medium">重新训练</button>' +
+          '<button onclick="showTrialEvaluate(\'' + versionId + '\')"' +
+            ' class="px-4 py-2 text-sm text-brand-600 hover:bg-brand-50 rounded-lg border border-brand-200 font-medium">试评估</button>' +
+        '</div>' +
+      '</div>';
     return;
   }
 
-  // Data prep / Training stages: show grouped files
-  const stage = pipelineStages.find(s => s.key === stageKey);
-  const allEmpty = stage.categories.every(cat => !data[cat] || !data[cat].length);
+  // ── Datasets tab — special handling for image preview ──
+  if (tabKey === 'datasets') {
+    var dsFiles = data || [];
+    var catLabel = '\uD83D\uDCCA 数据集';
+    var csvFiles = dsFiles.filter(function(f) { return f.name.endsWith('.csv'); });
 
-  if (allEmpty) {
-    container.innerHTML = `
-      <div class="space-y-3">
-        ${stage.categories.map(cat => `
-          <div class="flex items-center justify-between py-2">
-            <span class="text-xs text-gray-500">${stage.categoryLabels[cat]}</span>
-            <button onclick="showUploadArtifact('${versionId}','${cat}')"
-              class="px-2 py-1 text-xs text-brand-600 hover:bg-brand-50 rounded border border-brand-200">+ 上传文件</button>
-          </div>
-        `).join('')}
-      </div>`;
+    var filesHtml = '';
+    if (dsFiles.length) {
+      filesHtml = renderFileList(dsFiles, versionId, 'datasets');
+    } else {
+      filesHtml = '<div class="text-xs text-gray-400 py-2">暂无文件</div>';
+    }
+
+    var csvBtns = csvFiles.map(function(f) {
+      return '<button onclick="previewDataset(\'' + versionId + '\',\'' + f.name + '\')"' +
+        ' class="px-3 py-1 text-xs bg-green-50 text-green-700 rounded-lg border border-green-200 hover:bg-green-100">' +
+        '预览 ' + f.name + '</button>';
+    }).join('');
+    var csvSection = csvFiles.length ? '<div class="flex flex-wrap gap-2 mt-2">' + csvBtns + '</div>' : '';
+
+    container.innerHTML =
+      '<div>' +
+        '<div class="flex items-center justify-between mb-2">' +
+          '<h4 class="text-xs font-semibold text-gray-600">' + catLabel + ' <span class="text-gray-400 font-normal">(' + dsFiles.length + ')</span></h4>' +
+          '<button onclick="showUploadArtifact(\'' + versionId + '\',\'datasets\')" class="px-2 py-1 text-xs text-brand-600 hover:bg-brand-50 rounded border border-brand-200">+ 上传文件</button>' +
+        '</div>' +
+        filesHtml + csvSection +
+        '<div id="artifact-view-datasets-' + versionId + '"></div>' +
+        '<div id="image-grid-' + versionId + '" class="mt-3"></div>' +
+      '</div>';
+
+    // Try loading image grid preview
+    previewImageGrid(versionId);
     return;
   }
 
-  const isTextFile = name => /\.(py|yaml|yml|txt|json|md|cfg|ini|toml)$/.test(name);
+  // ── Code / Features / Params tabs — generic file list ──
+  var tab = artifactTabs.find(function(t) { return t.key === tabKey; });
+  var files = data || [];
+  var tabLabel = tab.icon + ' ' + tab.label;
 
-  container.innerHTML = `
-    <div class="space-y-4">
-      ${stage.categories.map(cat => {
-        const files = data[cat] || [];
-        const csvFiles = files.filter(f => f.name.endsWith('.csv'));
-        return `
-          <div>
-            <div class="flex items-center justify-between mb-2">
-              <h4 class="text-xs font-semibold text-gray-600">${stage.categoryLabels[cat]} <span class="text-gray-400 font-normal">(${files.length})</span></h4>
-              <button onclick="showUploadArtifact('${versionId}','${cat}')"
-                class="px-2 py-1 text-xs text-brand-600 hover:bg-brand-50 rounded border border-brand-200">+ 上传文件</button>
-            </div>
-            ${files.length ? `<div class="flex flex-wrap gap-2">
-              ${files.map(f => `
-                <div class="flex items-center gap-0.5">
-                  <button onclick="viewArtifact('${versionId}','${cat}','${f.name}')"
-                    class="artifact-btn px-3 py-1.5 text-xs rounded-lg border hover:bg-gray-50 flex items-center gap-1.5">
-                    <span class="${fileIcon(f.name)}">${fileIconChar(f.name)}</span>
-                    <span>${f.name}</span>
-                    <span class="text-gray-400">${formatBytes(f.size)}</span>
-                  </button>
-                  ${isTextFile(f.name) ? `<button onclick="editArtifact('${versionId}','${cat}','${f.name}')"
-                    class="p-1 text-gray-400 hover:text-blue-600" title="编辑">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
-                    </svg>
-                  </button>` : ''}
-                  <button onclick="deleteArtifact('${versionId}','${cat}','${f.name}')"
-                    class="p-1 text-gray-400 hover:text-red-600" title="删除">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                    </svg>
-                  </button>
-                </div>
-              `).join('')}
-            </div>` : '<div class="text-xs text-gray-400 py-2">暂无文件</div>'}
-            ${csvFiles.length ? `<div class="flex flex-wrap gap-2 mt-2">${csvFiles.map(f =>
-              `<button onclick="previewDataset('${versionId}','${f.name}')"
-                class="px-3 py-1 text-xs bg-green-50 text-green-700 rounded-lg border border-green-200 hover:bg-green-100">
-                预览 ${f.name}
-              </button>`
-            ).join('')}</div>` : ''}
-            <div id="artifact-view-${cat}-${versionId}"></div>
-            ${stageKey === 'training' && cat === 'params' ? '<div class="mt-2"><button onclick="recommendTemplate(\'' + versionId + '\')" class="px-3 py-1.5 text-xs text-purple-600 hover:bg-purple-50 rounded-lg border border-purple-200 font-medium">推荐模板</button></div>' : ''}
-          </div>
-        `;
-      }).join('')}
-    </div>
-  `;
+  if (!files.length) {
+    container.innerHTML =
+      '<div class="flex items-center justify-between py-4">' +
+        '<span class="text-xs text-gray-500">' + tabLabel + '</span>' +
+        '<button onclick="showUploadArtifact(\'' + versionId + '\',\'' + tab.category + '\')"' +
+          ' class="px-2 py-1 text-xs text-brand-600 hover:bg-brand-50 rounded border border-brand-200">+ 上传文件</button>' +
+      '</div>';
+    return;
+  }
+
+  container.innerHTML =
+    '<div>' +
+      '<div class="flex items-center justify-between mb-2">' +
+        '<h4 class="text-xs font-semibold text-gray-600">' + tabLabel + ' <span class="text-gray-400 font-normal">(' + files.length + ')</span></h4>' +
+        '<button onclick="showUploadArtifact(\'' + versionId + '\',\'' + tab.category + '\')"' +
+          ' class="px-2 py-1 text-xs text-brand-600 hover:bg-brand-50 rounded border border-brand-200">+ 上传文件</button>' +
+      '</div>' +
+      renderFileList(files, versionId, tab.category) +
+      '<div id="artifact-view-' + tab.category + '-' + versionId + '"></div>' +
+      (tabKey === 'params' ? '<div class="mt-2"><button onclick="recommendTemplate(\'' + versionId + '\')" class="px-3 py-1.5 text-xs text-purple-600 hover:bg-purple-50 rounded-lg border border-purple-200 font-medium">推荐模板</button></div>' : '') +
+    '</div>';
+}
+
+function renderFileList(files, versionId, category) {
+  var isTextFile = function(name) { return /\.(py|yaml|yml|txt|json|md|cfg|ini|toml)$/.test(name); };
+  return '<div class="flex flex-wrap gap-2">' +
+    files.map(function(f) {
+      var editBtn = isTextFile(f.name)
+        ? '<button onclick="editArtifact(\'' + versionId + '\',\'' + category + '\',\'' + f.name + '\')"' +
+          ' class="p-1 text-gray-400 hover:text-blue-600" title="编辑">' +
+          '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
+            '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"' +
+              ' d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>' +
+          '</svg></button>'
+        : '';
+      return '<div class="flex items-center gap-0.5">' +
+        '<button onclick="viewArtifact(\'' + versionId + '\',\'' + category + '\',\'' + f.name + '\')"' +
+          ' class="artifact-btn px-3 py-1.5 text-xs rounded-lg border hover:bg-gray-50 flex items-center gap-1.5">' +
+          '<span class="' + fileIcon(f.name) + '">' + fileIconChar(f.name) + '</span>' +
+          '<span>' + f.name + '</span>' +
+          '<span class="text-gray-400">' + formatBytes(f.size) + '</span>' +
+        '</button>' +
+        editBtn +
+        '<button onclick="deleteArtifact(\'' + versionId + '\',\'' + category + '\',\'' + f.name + '\')"' +
+          ' class="p-1 text-gray-400 hover:text-red-600" title="删除">' +
+          '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
+            '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"' +
+              ' d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>' +
+          '</svg></button>' +
+      '</div>';
+    }).join('') +
+  '</div>';
+}
+
+async function previewImageGrid(versionId) {
+  var gridEl = document.getElementById('image-grid-' + versionId);
+  if (!gridEl) return;
+
+  try {
+    var base = '/models/' + currentModelId + '/versions/' + versionId;
+    var result = await api(base + '/datasets/preview-images?count=36&offset=0');
+    if (!result || result.type === 'none') return;
+
+    var images = result.images || [];
+    if (!images.length) return;
+
+    var meta = result.metadata || {};
+    var headerHtml =
+      '<div class="flex items-center justify-between mb-2">' +
+        '<h4 class="text-xs font-semibold text-gray-600">\uD83D\uDDBC\uFE0F 图像预览' +
+          ' <span class="text-gray-400 font-normal">(' + result.total + ' 张, ' + meta.rows + 'x' + meta.cols + ')</span>' +
+        '</h4>' +
+      '</div>';
+
+    var gridItems = images.map(function(img) {
+      var labelStr = img.label !== null && img.label !== undefined ? img.label : '';
+      return '<div class="flex flex-col items-center">' +
+        '<img src="' + img.data + '" ' +
+          'class="rounded border" style="width:56px;height:56px;image-rendering:pixelated;" />' +
+        '<span class="text-[10px] text-gray-500 mt-0.5">' + labelStr + '</span>' +
+      '</div>';
+    }).join('');
+
+    var loadMoreHtml = '';
+    if (result.offset + images.length < result.total) {
+      var nextOffset = result.offset + images.length;
+      loadMoreHtml =
+        '<div class="mt-2 text-center">' +
+          '<button onclick="loadMoreImages(\'' + versionId + '\',' + nextOffset + ')"' +
+            ' class="px-3 py-1 text-xs text-brand-600 hover:bg-brand-50 rounded-lg border border-brand-200">' +
+            '加载更多</button>' +
+        '</div>';
+    }
+
+    gridEl.innerHTML = headerHtml +
+      '<div class="grid gap-2" style="grid-template-columns:repeat(6,1fr);">' + gridItems + '</div>' +
+      loadMoreHtml;
+  } catch (e) {
+    // Silently skip if no image data available
+  }
+}
+
+async function loadMoreImages(versionId, offset) {
+  try {
+    var base = '/models/' + currentModelId + '/versions/' + versionId;
+    var result = await api(base + '/datasets/preview-images?count=36&offset=' + offset);
+    if (!result || result.type === 'none') return;
+
+    var images = result.images || [];
+    if (!images.length) return;
+
+    var gridEl = document.getElementById('image-grid-' + versionId);
+    if (!gridEl) return;
+
+    // Find existing grid container and append
+    var gridContainer = gridEl.querySelector('.grid');
+    if (!gridContainer) return;
+
+    var newItems = images.map(function(img) {
+      var labelStr = img.label !== null && img.label !== undefined ? img.label : '';
+      return '<div class="flex flex-col items-center">' +
+        '<img src="' + img.data + '" ' +
+          'class="rounded border" style="width:56px;height:56px;image-rendering:pixelated;" />' +
+        '<span class="text-[10px] text-gray-500 mt-0.5">' + labelStr + '</span>' +
+      '</div>';
+    }).join('');
+
+    gridContainer.insertAdjacentHTML('beforeend', newItems);
+
+    // Update or remove load more button
+    var loadMoreDiv = gridEl.querySelector('.text-center:last-child');
+    if (loadMoreDiv) {
+      var nextOffset = offset + images.length;
+      if (nextOffset < result.total) {
+        loadMoreDiv.innerHTML =
+          '<button onclick="loadMoreImages(\'' + versionId + '\',' + nextOffset + ')"' +
+            ' class="px-3 py-1 text-xs text-brand-600 hover:bg-brand-50 rounded-lg border border-brand-200">' +
+            '加载更多</button>';
+      } else {
+        loadMoreDiv.remove();
+      }
+    }
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
 }
 
 function fileIcon(name) {
@@ -1376,9 +1502,9 @@ function invalidateArtifactCache(versionId) {
   });
 }
 
-function reloadCurrentStage(versionId) {
-  if (expandedVersionId === versionId && activePipelineStage) {
-    loadPipelineStage(versionId, activePipelineStage);
+function reloadCurrentTab(versionId) {
+  if (expandedVersionId === versionId && activeArtifactTab) {
+    loadArtifactTab(versionId, activeArtifactTab);
   }
 }
 
@@ -1434,7 +1560,7 @@ async function createDraftVersion() {
     showToast(`草稿版本 ${fmtVer(result.version)} 已创建`);
     currentModelVersions = await api(`/models/${currentModelId}/versions`);
     expandedVersionId = result.id;
-    activePipelineStage = 'data_prep';
+    activeArtifactTab = 'weights';
     artifactTabCache = {};
     renderVersionsTab();
   } catch (e) { showToast(e.message, 'error'); }
@@ -1522,7 +1648,7 @@ async function uploadArtifact(e, versionId, category) {
     document.getElementById('upload-artifact-overlay').remove();
     showToast('文件上传成功');
     invalidateArtifactCache(versionId);
-    reloadCurrentStage(versionId);
+    reloadCurrentTab(versionId);
   } catch (err) {
     showToast(err.message, 'error');
   }
@@ -1577,7 +1703,7 @@ async function saveArtifact(versionId, category, filename) {
     document.getElementById('edit-artifact-overlay').remove();
     showToast('文件已保存');
     invalidateArtifactCache(versionId);
-    reloadCurrentStage(versionId);
+    reloadCurrentTab(versionId);
   } catch (err) {
     showToast(err.message, 'error');
   }
@@ -1596,7 +1722,7 @@ async function deleteArtifact(versionId, category, filename) {
     }
     showToast('文件已删除');
     invalidateArtifactCache(versionId);
-    reloadCurrentStage(versionId);
+    reloadCurrentTab(versionId);
   } catch (err) {
     showToast(err.message, 'error');
   }
@@ -2181,7 +2307,7 @@ async function forkAndAdapt(versionId) {
     // Expand the forked version and show output stage with guidance banner
     if (versions.length) {
       expandedVersionId = versions[0].id;
-      activePipelineStage = 'output';
+      activeArtifactTab = 'weights';
       artifactTabCache = {};
     }
     switchSubTab('versions');
@@ -2477,7 +2603,7 @@ function viewNewVersion(versionId) {
   var overlay = document.getElementById('retrain-overlay');
   if (overlay) overlay.remove();
   expandedVersionId = versionId;
-  activePipelineStage = 'output';
+  activeArtifactTab = 'weights';
   artifactTabCache = {};
   renderVersionsTab();
 }
@@ -2486,9 +2612,9 @@ function viewNewVersion(versionId) {
 
 function dismissAdaptGuide() {
   pendingAdaptGuide = null;
-  if (expandedVersionId && activePipelineStage === 'output') {
+  if (expandedVersionId && activeArtifactTab === 'weights') {
     invalidateArtifactCache(expandedVersionId);
-    loadPipelineStage(expandedVersionId, 'output');
+    loadArtifactTab(expandedVersionId, 'weights');
   }
 }
 
@@ -3427,6 +3553,14 @@ async function doExport() {
     showToast('导出完成');
     var overlay = document.getElementById('overlay-export');
     if (overlay) overlay.remove();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function reloadModelIndex() {
+  try {
+    var res = await api('/models/reload', { method: 'POST' });
+    showToast('列表已刷新 (' + res.model_count + ' 个模型)', 'success');
+    await loadModels();
   } catch (e) { showToast(e.message, 'error'); }
 }
 

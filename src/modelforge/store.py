@@ -15,6 +15,7 @@ from typing import Any
 
 from modelforge.adapters.filesystem.metadata_store import (
     YAMLMetadataStore,
+    _scan_artifacts,
     slugify,
 )
 from modelforge.adapters.filesystem.yaml_io import JSONLFile, YAMLFile
@@ -90,6 +91,7 @@ class ModelStore(YAMLMetadataStore):
             "metrics": data.get("metrics"),
             "stage": "development",
             "parent_version_id": data.get("parent_version_id"),
+            "artifacts": _scan_artifacts(vdir),
             "created_at": now,
             "updated_at": now,
         }

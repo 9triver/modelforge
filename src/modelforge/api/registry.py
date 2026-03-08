@@ -102,6 +102,13 @@ async def import_model(
         os.unlink(tmp_path)
 
 
+@router.post("/reload", status_code=200)
+async def reload_index(store: ModelStore = Depends(get_store)):
+    """Rescan model_store and rebuild the in-memory index."""
+    store._rebuild_index()
+    return {"status": "ok", "model_count": len(store._index)}
+
+
 @router.get("/{model_id}", response_model=ModelAssetResponse)
 def get_model(model_id: str, store: ModelStore = Depends(get_store)):
     result = store.get_model(model_id)
@@ -226,6 +233,21 @@ def read_artifact(
 ):
     content = store.read_version_artifact(model_id, version_id, category, filename)
     return PlainTextResponse(content)
+
+
+@router.get(
+    "/{model_id}/versions/{version_id}/datasets/preview-images",
+)
+def preview_images(
+    model_id: str,
+    version_id: str,
+    count: int = Query(36, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    store: ModelStore = Depends(get_store),
+):
+    return store.preview_images(
+        model_id, version_id, count=count, offset=offset,
+    )
 
 
 @router.get("/{model_id}/versions/{version_id}/datasets/{filename}/preview")

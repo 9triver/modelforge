@@ -65,6 +65,7 @@
   <div class="flex items-center justify-between mb-6">
     <h1 class="text-xl font-semibold text-gray-900">模型中心</h1>
     <div class="flex gap-2">
+      <button onclick="reloadModelIndex()" class="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition" title="重新扫描 model_store">刷新列表</button>
       <button onclick="showImportDialog()" class="px-4 py-2 text-sm text-brand-600 border border-brand-200 rounded-lg hover:bg-brand-50 transition">导入模型</button>
       <button onclick="showModal('model-create')" class="px-4 py-2 bg-brand-600 text-white text-sm rounded-lg hover:bg-brand-700 transition">+ 注册模型</button>
     </div>
@@ -405,6 +406,6 @@
 <!-- Toast -->
 <div id="toast" class="hidden fixed bottom-6 right-6 z-50 px-4 py-3 rounded-lg shadow-lg text-sm text-white"></div>
 
-<script src="/static/app.js?v=28"></script>
+<script src="/static/app.js?v=30"></script>
 </body>
 </html>

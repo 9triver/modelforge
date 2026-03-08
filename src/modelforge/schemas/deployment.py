@@ -3,7 +3,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from modelforge.enums import DeploymentStatus
+from modelforge.core.types import Deployment
 
 
 class DeploymentCreate(BaseModel):
@@ -11,17 +11,9 @@ class DeploymentCreate(BaseModel):
     model_version_id: str
 
 
-class DeploymentResponse(BaseModel):
-    id: str
-    name: str
-    model_version_id: str
-    status: DeploymentStatus
-    endpoint_config: dict[str, Any] | None
-    error_message: str | None
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = {"from_attributes": True}
+class DeploymentResponse(Deployment):
+    """API response — inherits all fields from Deployment domain model."""
+    pass
 
 
 class PredictionRequest(BaseModel):

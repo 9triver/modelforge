@@ -1,130 +1,211 @@
-"""Domain value objects and data structures.
+"""Core domain models — the canonical shape of every entity in the platform.
 
-These are plain Pydantic models used by protocols, services, and APIs.
-They carry no business logic — just structured data.
+These Pydantic models define the persisted structure of each entity.
+The MetadataStore layer currently returns plain dicts that conform to
+these shapes; the API Response schemas inherit from these models to
+avoid field duplication.
+
+Usage::
+
+    from modelforge.core.types import ModelAsset, ModelVersion, Deployment
+    asset = ModelAsset.model_validate(store.get_model(model_id))
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-from modelforge.core.protocols import ArtifactType, Modality
+from modelforge.enums import AssetStatus, DeploymentStatus, VersionStage
 
 
-# ── Artifact Reference ──
+# ── ModelAsset ──
 
 
-class ArtifactRef(BaseModel):
-    """A pointer to a versioned artifact in the platform."""
+class ModelAsset(BaseModel):
+    """A registered model asset (top-level entity)."""
 
-    type: ArtifactType
     id: str
-    version: str | None = None
-    uri: str = ""
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-# ── Dataset Schema ──
-
-
-class ColumnDef(BaseModel):
-    """Column definition for tabular datasets."""
-
     name: str
-    dtype: str = "float64"
-    description: str = ""
-    nullable: bool = True
-    value_range: list[float] | None = None
-    categories: list[str] | None = None
+    slug: str = ""
+    description: str | None = None
+    task_type: str
+    algorithm_type: str
+    framework: str
+    owner_org: str
+    status: AssetStatus = AssetStatus.DRAFT
+    tags: list[str] | None = None
+    applicable_scenarios: dict[str, Any] | None = None
+    algorithm_description: str | None = None
+    input_schema: dict[str, Any] | None = None
+    output_schema: dict[str, Any] | None = None
+    created_at: datetime
+    updated_at: datetime
+    version_count: int = 0
+
+    model_config = {"from_attributes": True}
 
 
-class ImageSpec(BaseModel):
-    """Image specification for vision datasets."""
-
-    channels: int = 3
-    min_width: int | None = None
-    min_height: int | None = None
-    format: str = "jpg"  # jpg, png, bmp, etc.
+# ── Artifact Location ──
 
 
-class DatasetSchema(BaseModel):
-    """Unified schema covering tabular and vision modalities."""
+class ArtifactLocation(BaseModel):
+    """Describes where a single artifact category is stored.
 
-    format: str = "tabular_csv"  # tabular_csv, image_folder, coco_json, voc_xml
-    modality: Modality = Modality.TABULAR
-    columns: list[ColumnDef] | None = None
-    image_spec: ImageSpec | None = None
-    annotation_format: str | None = None
-    class_map: dict[int, str] | None = None
-    split_strategy: str = "random"
-    sample_count: int | None = None
+    When backend="local", uri is a relative path under the version directory.
+    For remote backends (s3, oss, git, dvc, ...), uri is a backend-specific
+    resource locator.
+    """
 
-
-# ── Training Job ──
-
-
-class EnvironmentSpec(BaseModel):
-    """Reproducibility environment specification."""
-
-    docker_image: str | None = None
-    requirements: list[str] = Field(default_factory=list)
-    conda_env: str | None = None
-    env_vars: dict[str, str] = Field(default_factory=dict)
-    python_version: str | None = None
-
-
-class CheckpointPolicy(BaseModel):
-    """Configurable checkpoint saving during training."""
-
-    save_interval_epochs: int | None = None
-    keep_last_n: int = 3
-    save_best_metric: str | None = None
-    save_best_mode: str = "min"  # min or max
-    export_formats: list[str] = Field(default_factory=list)  # onnx, torchscript, etc.
-
-
-class TrainingJob(BaseModel):
-    """A training job specification submitted to a TrainingBackend."""
-
-    id: str = ""
-    model_id: str
-    version_id: str
-    script: str
-    working_dir: str
-    args: list[str] = Field(default_factory=list)
-    env: EnvironmentSpec = Field(default_factory=EnvironmentSpec)
-    checkpoint_policy: CheckpointPolicy | None = None
-    overrides: dict[str, Any] = Field(default_factory=dict)
+    backend: str = "local"          # local, s3, oss, git, dvc, ...
+    uri: str = ""                   # 后端特定的资源定位符
+    size_bytes: int | None = None
+    checksum: str | None = None     # 如 "sha256:abc123..."
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class JobStatus(BaseModel):
-    """Status of a submitted training job."""
+# ── ModelVersion ──
 
-    job_id: str
-    state: str  # pending, running, success, failed, cancelled
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
-    metrics: dict[str, float] | None = None
+
+class ModelVersion(BaseModel):
+    """A specific version of a model asset, with weights and artifacts."""
+
+    id: str
+    asset_id: str = ""
+    version: str
+    description: str | None = None
+    file_format: str = "joblib"
+    file_path: str | None = None
+    file_size_bytes: int | None = 0
+    metrics: dict[str, Any] | None = None
+    stage: VersionStage = VersionStage.DEVELOPMENT
+    parent_version_id: str | None = None   # retrain: 同模型上一版本; fork: 来源模型的版本
+    source_model_id: str | None = None    # 非空表示 fork，指向来源 ModelAsset
+    artifacts: dict[str, ArtifactLocation] | None = None  # 制品清单
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Deployment ──
+
+
+class Deployment(BaseModel):
+    """A deployed model version serving predictions."""
+
+    id: str
+    name: str
+    model_version_id: str
+    model_id: str = ""
+    model_slug: str = ""
+    version_string: str = ""
+    file_format: str = ""
+    status: DeploymentStatus = DeploymentStatus.PENDING
+    endpoint_config: dict[str, Any] | None = None
+    error_message: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── PipelineRun ──
+
+
+class PipelineRun(BaseModel):
+    """A single execution of a training pipeline."""
+
+    id: str
+    model_id: str
+    status: str = "pending"  # pending, running, success, failed, cancelled
+    base_version: str = ""
+    target_version: str | None = None
+    pipeline_snapshot: dict[str, Any] | None = None
+    overrides: dict[str, Any] | None = None
+    log: str = ""
+    metrics: dict[str, Any] | None = None
+    result_version_id: str | None = None
+    result_version: str | None = None
     error: str | None = None
+    started_at: datetime
+    finished_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
 
 
-# ── IO Spec for ModelRunner ──
+# ── PredictionLog ──
 
 
-class IOSpec(BaseModel):
-    """Describes the input/output format of a model."""
+class PredictionLog(BaseModel):
+    """A single prediction record for monitoring."""
 
-    dtype: str = "float32"
-    shape: list[int | str] = Field(default_factory=list)  # e.g. [-1, 3, 224, 224]
-    description: str = ""
-    example: Any = None
+    id: str
+    deployment_id: str
+    input_data: Any = None
+    output_data: Any = None
+    actual_value: Any | None = None
+    latency_ms: float = 0.0
+    error: str | None = None
+    created_at: datetime
+    actual_submitted_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
 
 
-class PreprocessConfig(BaseModel):
-    """Preprocessing pipeline configuration stored with a model."""
+# ── FeatureDefinition ──
 
-    steps: list[dict[str, Any]] = Field(default_factory=list)
-    # e.g. [{"type": "normalize", "mean": [0.485], "std": [0.229]}]
+
+class FeatureDefinition(BaseModel):
+    """A global feature definition in the feature catalog."""
+
+    id: str
+    name: str
+    data_type: str
+    description: str | None = None
+    unit: str | None = None
+    computation_logic: str | None = None
+    value_range: dict[str, Any] | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── FeatureGroup ──
+
+
+class FeatureGroup(BaseModel):
+    """A named group of features, optionally tagged by scenario."""
+
+    id: str
+    name: str
+    description: str | None = None
+    scenario_tags: dict[str, Any] | None = None
+    feature_ids: list[str] = Field(default_factory=list)
+    features: list[dict[str, Any]] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── ParameterTemplate ──
+
+
+class ParameterTemplate(BaseModel):
+    """A recommended hyperparameter configuration."""
+
+    id: str
+    name: str
+    model_asset_id: str | None = None
+    algorithm_type: str | None = None
+    scenario_tags: dict[str, Any] | None = None
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    performance_notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}

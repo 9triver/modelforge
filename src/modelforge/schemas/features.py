@@ -3,6 +3,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from modelforge.core.types import FeatureDefinition
+
 # ── FeatureDefinition ──
 
 
@@ -24,18 +26,9 @@ class FeatureDefinitionUpdate(BaseModel):
     value_range: dict[str, Any] | None = None
 
 
-class FeatureDefinitionResponse(BaseModel):
-    id: str
-    name: str
-    data_type: str
-    description: str | None
-    unit: str | None
-    computation_logic: str | None
-    value_range: dict[str, Any] | None
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = {"from_attributes": True}
+class FeatureDefinitionResponse(FeatureDefinition):
+    """API response — inherits all fields from FeatureDefinition domain model."""
+    pass
 
 
 # ── FeatureGroup ──
@@ -56,6 +49,9 @@ class FeatureGroupUpdate(BaseModel):
 
 
 class FeatureGroupResponse(BaseModel):
+    """Standalone response — uses resolved FeatureDefinitionResponse list
+    instead of raw feature_ids, so it does not inherit from FeatureGroup."""
+
     id: str
     name: str
     description: str | None

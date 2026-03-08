@@ -1,100 +1,18 @@
 """Abstract Protocol definitions for the ModelForge platform.
 
-All backend implementations (filesystem, MinIO, DVC, MLflow, …) conform to
-one or more of these protocols.  The API / service layer depends *only* on
-these interfaces.
+Defines the interfaces that backend implementations must satisfy.
+The API / service layer depends only on these protocols, never on
+concrete implementations.
+
+Domain model types (ModelAsset, ModelVersion, etc.) are defined in
+``core.types``.  Protocol methods currently use ``dict`` for backward
+compatibility; the dicts conform to the corresponding domain model shape.
 """
 
 from __future__ import annotations
 
-import enum
-from datetime import datetime
 from pathlib import Path
-from typing import IO, Any, Protocol, runtime_checkable
-
-
-# ── Value Objects / Enums ──
-
-
-class ArtifactType(str, enum.Enum):
-    MODEL_WEIGHTS = "model_weights"
-    DATASET = "dataset"
-    CODE = "code"
-    PARAMETERS = "parameters"
-    FEATURES = "features"
-    METRICS = "metrics"
-    PREPROCESS_CONFIG = "preprocess"
-    ENVIRONMENT = "environment"
-
-
-class LineageEventType(str, enum.Enum):
-    TRAINING = "training"
-    EVALUATION = "evaluation"
-    FORK = "fork"
-    IMPORT = "import"
-    EXPORT = "export"
-    FINE_TUNE = "fine_tune"
-    DEPLOYMENT = "deployment"
-
-
-class JobState(str, enum.Enum):
-    PENDING = "pending"
-    RUNNING = "running"
-    SUCCESS = "success"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-class Modality(str, enum.Enum):
-    TABULAR = "tabular"
-    IMAGE = "image"
-    VIDEO = "video"
-    TEXT = "text"
-    MULTIMODAL = "multimodal"
-
-
-# ── Artifact Store ──
-
-
-@runtime_checkable
-class ArtifactStore(Protocol):
-    """Binary object storage abstraction.
-
-    Implementations: local filesystem, MinIO / S3, etc.
-    Keys use forward-slash paths (e.g. ``models/slug/versions/v1/weights/model.pkl``).
-    """
-
-    def put(self, key: str, data: IO[bytes], metadata: dict[str, str] | None = None) -> str:
-        """Store binary data. Returns the key."""
-        ...
-
-    def get(self, key: str) -> IO[bytes]:
-        """Retrieve binary data by key."""
-        ...
-
-    def delete(self, key: str) -> None:
-        """Delete a single object."""
-        ...
-
-    def list_keys(self, prefix: str) -> list[str]:
-        """List all keys under *prefix*."""
-        ...
-
-    def exists(self, key: str) -> bool:
-        """Check whether a key exists."""
-        ...
-
-    def copy(self, src_key: str, dst_key: str) -> None:
-        """Copy an object within the store."""
-        ...
-
-    def get_local_path(self, key: str) -> Path | None:
-        """Return a local filesystem path if the store is local, else *None*.
-
-        This is an optimisation hook: callers that need a ``Path`` (e.g. to
-        pass to a subprocess) can avoid downloading when running locally.
-        """
-        ...
+from typing import Any, Protocol, runtime_checkable
 
 
 # ── Metadata Store ──
@@ -105,9 +23,12 @@ class MetadataStore(Protocol):
     """Structured metadata persistence (models, versions, deployments, …).
 
     Implementations: YAML-file, SQLite, PostgreSQL, etc.
+
+    All methods take/return plain dicts whose shape matches the domain
+    models in ``core.types`` (ModelAsset, ModelVersion, Deployment, …).
     """
 
-    # -- Models --
+    # -- Models (-> ModelAsset) --
 
     def create_model(self, data: dict) -> dict:
         ...
@@ -138,7 +59,7 @@ class MetadataStore(Protocol):
     def transition_status(self, model_id: str, target_status: str) -> dict:
         ...
 
-    # -- Versions --
+    # -- Versions (-> ModelVersion) --
 
     def create_version(self, model_id: str, data: dict) -> dict:
         ...
@@ -159,7 +80,7 @@ class MetadataStore(Protocol):
         """Return *(model_id, slug, version_str, data)* or *None*."""
         ...
 
-    # -- Deployments --
+    # -- Deployments (-> Deployment) --
 
     def create_deployment(self, data: dict) -> dict:
         ...
@@ -186,7 +107,7 @@ class MetadataStore(Protocol):
     def delete_deployment(self, deployment_id: str) -> None:
         ...
 
-    # -- Pipeline runs --
+    # -- Pipeline runs (-> PipelineRun) --
 
     def create_run(self, model_id: str, data: dict) -> dict:
         ...
@@ -211,7 +132,7 @@ class MetadataStore(Protocol):
     def delete_pipeline(self, model_id: str) -> None:
         ...
 
-    # -- Prediction logs --
+    # -- Prediction logs (-> PredictionLog) --
 
     def log_prediction(self, deployment_id: str, input_data: Any, output: Any, latency_ms: float) -> dict:
         ...
@@ -246,7 +167,7 @@ class MetadataStore(Protocol):
     ) -> dict:
         ...
 
-    # -- Feature catalog --
+    # -- Feature catalog (-> FeatureDefinition, FeatureGroup) --
 
     def create_feature_definition(self, data: dict) -> dict:
         ...
@@ -293,7 +214,7 @@ class MetadataStore(Protocol):
     def list_model_groups(self, model_id: str) -> list[dict]:
         ...
 
-    # -- Parameter templates --
+    # -- Parameter templates (-> ParameterTemplate) --
 
     def create_parameter_template(self, data: dict) -> dict:
         ...
@@ -322,45 +243,6 @@ class MetadataStore(Protocol):
 
     def get_model_slug(self, model_id: str) -> str | None:
         """Return the slug for a model ID (used by artifact layer)."""
-        ...
-
-
-# ── Dataset Manager ──
-
-
-@runtime_checkable
-class DatasetManager(Protocol):
-    """Dataset lifecycle management.
-
-    Implementations: local filesystem, DVC, LakeFS, etc.
-    """
-
-    def register(self, name: str, schema: dict) -> dict:
-        ...
-
-    def add_version(
-        self,
-        dataset_id: str,
-        source: str | IO[bytes],
-        metadata: dict | None = None,
-    ) -> dict:
-        ...
-
-    def get_version(self, dataset_id: str, version: str) -> dict:
-        ...
-
-    def list_datasets(
-        self,
-        *,
-        modality: str | None = None,
-        search: str | None = None,
-    ) -> list[dict]:
-        ...
-
-    def compare_versions(self, dataset_id: str, v1: str, v2: str) -> dict:
-        ...
-
-    def validate(self, dataset_id: str, version: str, rules: list[dict] | None = None) -> dict:
         ...
 
 
@@ -421,38 +303,4 @@ class ModelRunner(Protocol):
     @property
     def output_spec(self) -> dict:
         """Describe output format."""
-        ...
-
-
-# ── Evaluator ──
-
-
-@runtime_checkable
-class Evaluator(Protocol):
-    """Model evaluation plugin interface.
-
-    Implementations provide task-specific metrics and diagnostics.
-    """
-
-    @property
-    def supported_tasks(self) -> list[str]:
-        """Task types this evaluator handles (e.g. 'regression', 'classification', 'object_detection')."""
-        ...
-
-    def evaluate(
-        self,
-        predictions: Any,
-        ground_truth: Any,
-        **kwargs: Any,
-    ) -> dict:
-        """Compute metrics. Returns {metric_name: value}."""
-        ...
-
-    def diagnose(
-        self,
-        model_path: Path,
-        dataset: Any,
-        **kwargs: Any,
-    ) -> dict:
-        """Run diagnostics (SHAP, drift, GradCAM, etc.). Returns structured report."""
         ...
