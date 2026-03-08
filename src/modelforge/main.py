@@ -13,6 +13,7 @@ from modelforge import __version__
 from modelforge.api.deployment import predict_router, router as deployment_router
 from modelforge.api.evaluation import router as evaluation_router
 from modelforge.api.features import router as features_router
+from modelforge.api.lineage import router as lineage_router
 from modelforge.api.monitoring import router as monitoring_router
 from modelforge.api.parameters import router as parameters_router
 from modelforge.api.registry import router as registry_router
@@ -190,6 +191,7 @@ app.include_router(deployment_router, prefix=settings.API_V1_PREFIX)
 app.include_router(predict_router, prefix=settings.API_V1_PREFIX)
 app.include_router(monitoring_router, prefix=settings.API_V1_PREFIX)
 app.include_router(evaluation_router, prefix=settings.API_V1_PREFIX)
+app.include_router(lineage_router, prefix=settings.API_V1_PREFIX)
 
 class NoCacheStaticMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):

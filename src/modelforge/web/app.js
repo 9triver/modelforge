@@ -70,7 +70,9 @@ function badge(status) {
 
 const taskTypeLabels = {
   load_forecast: '负荷预测', anomaly_detection: '异常检测',
-  equipment_diagnosis: '设备诊断',
+  equipment_diagnosis: '设备诊断', digit_recognition: '数字识别',
+  image_classification: '图像分类', classification: '分类',
+  regression: '回归',
 };
 
 // ── Page Navigation ──

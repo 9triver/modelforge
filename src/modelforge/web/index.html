@@ -74,8 +74,12 @@
     <select id="model-filter-task" class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white" onchange="loadModels()">
       <option value="">全部任务类型</option>
       <option value="load_forecast">负荷预测</option>
+      <option value="digit_recognition">数字识别</option>
+      <option value="image_classification">图像分类</option>
       <option value="anomaly_detection">异常检测</option>
       <option value="equipment_diagnosis">设备诊断</option>
+      <option value="regression">回归</option>
+      <option value="classification">分类</option>
     </select>
     <select id="model-filter-status" class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white" onchange="loadModels()">
       <option value="">全部状态</option>
@@ -401,6 +405,6 @@
 <!-- Toast -->
 <div id="toast" class="hidden fixed bottom-6 right-6 z-50 px-4 py-3 rounded-lg shadow-lg text-sm text-white"></div>
 
-<script src="/static/app.js?v=27"></script>
+<script src="/static/app.js?v=28"></script>
 </body>
 </html>

@@ -39,3 +39,10 @@ htmlcov/
 # Example outputs
 examples/load_forecast/*.joblib
 examples/load_forecast/*.csv
+examples/load_forecast/metrics.json
+examples/mnist/datasets/
+examples/mnist/weights/
+examples/mnist/metrics.json
+
+# Temporary data files
+trial_eval_*.csv
