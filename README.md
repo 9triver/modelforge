@@ -31,7 +31,7 @@ ModelForge 围绕一个核心问题构建：**如何让电力行业的 AI 模型
 │                     ▼             ▼                       │
 │  ┌─────────────── Core Layer ──────────────────────┐     │
 │  │  Protocols     Types       DI Container          │     │
-│  │ (MetadataStore, ArtifactStore, TrainingBackend)   │     │
+│  │ (MetadataStore, TrainingBackend, ModelRunner)     │     │
 │  └──────────────────┬──────────────────────────────┘     │
 │                     ▼                                     │
 │  ┌─────────────── Adapters ────────────────────────┐     │
@@ -365,6 +365,17 @@ pip install -r requirements.txt
 python run_scenario.py          # 完整 8 步演示
 python seed_store.py            # 预填充到 ModelForge 平台
 ```
+
+### 适配技术调研
+
+详见 [docs/adaptation-tech-survey.md](docs/adaptation-tech-survey.md)，覆盖六大类技术：
+
+1. **特征工程适配** — SHAP、MI、Boruta、特征空间对齐
+2. **参数迁移与快速调优** — 贝叶斯优化、Warm Start BO、Multi-fidelity
+3. **模型融合与路由** — Ensemble、Stacking、Gating Network / MoE
+4. **模型微调与迁移学习** — Fine-tuning、CORAL、DANN、MAML、TrAdaBoost
+5. **数据分布漂移监测** — PSI、KS、DDM、ADWIN、CUSUM
+6. **视觉模型适配** — Grad-CAM、ADDA、SHOT、BN Adaptation、LoRA、CycleGAN、FID
 
 ## 快速开始
 
