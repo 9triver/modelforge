@@ -72,25 +72,56 @@ def _flatten_model_index(model_index: list | None) -> list[dict]:
 # ---------- / 首页 ----------
 
 @router.get("/", response_class=HTMLResponse)
-def index(request: Request):
-    repos_raw = db.list_repos()
-    repos = []
-    for r in repos_raw:
-        owner = db.get_user_by_id(r.owner_id)
-        preview = _get_repo_preview(r.name)
-        repos.append({
-            "name": r.name,
-            "owner": owner.name if owner else "<unknown>",
-            "is_private": r.is_private,
-            "created_at": r.created_at,
-            "metadata": preview["metadata"],
-            "error": preview["error"],
-        })
+def index(
+    request: Request,
+    library: str | None = None,
+    tag: str | None = None,
+    max_mape: float | None = None,
+):
+    if library or tag or max_mape is not None:
+        pairs = db.search_repos(
+            library_name=library,
+            tag=tag,
+            max_metric=max_mape,
+            metric_name="mape" if max_mape is not None else None,
+        )
+        repos = []
+        for r, card in pairs:
+            owner = db.get_user_by_id(r.owner_id)
+            preview = _get_repo_preview(r.name)
+            repos.append({
+                "name": r.name,
+                "owner": owner.name if owner else "<unknown>",
+                "is_private": r.is_private,
+                "created_at": r.created_at,
+                "metadata": preview["metadata"],
+                "error": preview["error"],
+            })
+    else:
+        repos_raw = db.list_repos()
+        repos = []
+        for r in repos_raw:
+            owner = db.get_user_by_id(r.owner_id)
+            preview = _get_repo_preview(r.name)
+            repos.append({
+                "name": r.name,
+                "owner": owner.name if owner else "<unknown>",
+                "is_private": r.is_private,
+                "created_at": r.created_at,
+                "metadata": preview["metadata"],
+                "error": preview["error"],
+            })
 
     return templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={"repos": repos, "version": __version__},
+        context={
+            "repos": repos,
+            "version": __version__,
+            "filter_library": library or "",
+            "filter_tag": tag or "",
+            "filter_max_mape": max_mape if max_mape is not None else "",
+        },
     )
 
 

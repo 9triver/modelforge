@@ -2,12 +2,15 @@
 
 - POST /api/v1/repos    创建仓库
 - GET  /api/v1/repos    列表
+- GET  /api/v1/repos/search  按 Model Card 字段搜索
 - GET  /api/v1/repos/{name}  详情
 - DELETE /api/v1/repos/{name}  删除（仅 owner）
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import json
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from .. import db, storage
@@ -27,6 +30,20 @@ class RepoResponse(BaseModel):
     is_private: bool
     created_at: str
     git_url: str
+
+
+class RepoSearchResult(BaseModel):
+    name: str
+    owner: str
+    library_name: str | None = None
+    pipeline_tag: str | None = None
+    license: str | None = None
+    tags: list[str] = []
+    base_model: str | None = None
+    best_metric_name: str | None = None
+    best_metric_value: float | None = None
+    revision: str | None = None
+    updated_at: str | None = None
 
 
 def _to_response(repo: db.Repo, base_url: str = "") -> RepoResponse:
@@ -56,6 +73,54 @@ def create_repo(req: CreateRepoRequest, user: db.User = Depends(require_user)):
 @router.get("", response_model=list[RepoResponse])
 def list_repos():
     return [_to_response(r) for r in db.list_repos()]
+
+
+@router.get("/search", response_model=list[RepoSearchResult])
+def search_repos(
+    library: str | None = Query(None, description="精确匹配 library_name，如 'lightgbm'"),
+    pipeline_tag: str | None = Query(None, description="精确匹配 pipeline_tag"),
+    license: str | None = Query(None, description="精确匹配 license"),
+    tag: str | None = Query(None, description="tags 中包含该 tag"),
+    metric: str | None = Query(None, description="限定指标名（如 'mape'）"),
+    max_metric: float | None = Query(None, description="best_metric_value <= max_metric"),
+    limit: int = Query(100, ge=1, le=500),
+):
+    """按 Model Card 字段组合搜索。
+
+    例：/api/v1/repos/search?library=lightgbm&metric=mape&max_metric=4.0
+    """
+    pairs = db.search_repos(
+        library_name=library,
+        pipeline_tag=pipeline_tag,
+        license_=license,
+        tag=tag,
+        max_metric=max_metric,
+        metric_name=metric,
+        limit=limit,
+    )
+    out: list[RepoSearchResult] = []
+    for repo, card in pairs:
+        owner = db.get_user_by_id(repo.owner_id)
+        tags = []
+        if card and card.tags_json:
+            try:
+                tags = json.loads(card.tags_json)
+            except json.JSONDecodeError:
+                tags = []
+        out.append(RepoSearchResult(
+            name=repo.name,
+            owner=owner.name if owner else "<unknown>",
+            library_name=card.library_name if card else None,
+            pipeline_tag=card.pipeline_tag if card else None,
+            license=card.license if card else None,
+            tags=tags,
+            base_model=card.base_model if card else None,
+            best_metric_name=card.best_metric_name if card else None,
+            best_metric_value=card.best_metric_value if card else None,
+            revision=card.revision if card else None,
+            updated_at=card.updated_at if card else None,
+        ))
+    return out
 
 
 @router.get("/{name}", response_model=RepoResponse)

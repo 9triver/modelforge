@@ -9,17 +9,21 @@
   - 对每个非删除的 ref update，读 README.md at new-sha
   - 用 modelforge.schema.validate_model_card 校验
   - 任一失败整个 push 被拒绝
+  - 校验通过 → 把 frontmatter 关键字段写入 SQLite repo_cards 表（供搜索）
 
 绕过机制：设置环境变量 MODELFORGE_SKIP_VALIDATION=1（用于紧急情况）
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
-from ..schema import ModelCardError, validate_model_card
+from .. import db
+from ..schema import ModelCardError, parse_frontmatter, validate_model_card
 
 ZERO_SHA = "0" * 40
 ZERO_SHA_256 = "0" * 64  # Git SHA-256 支持
@@ -41,21 +45,67 @@ def _read_file_at_commit(repo_dir: Path, sha: str, filepath: str) -> str | None:
         return None
 
 
-def _validate_ref(repo_dir: Path, new_sha: str, ref: str) -> list[str]:
-    """校验单个 ref update。返回错误信息列表（空表示通过）。"""
+def _validate_ref(repo_dir: Path, new_sha: str, ref: str) -> tuple[list[str], dict | None]:
+    """校验单个 ref update。返回 (错误列表, 解析后的 frontmatter dict)。"""
     readme = _read_file_at_commit(repo_dir, new_sha, "README.md")
     if readme is None:
-        return [
+        return ([
             f"[{ref}] 缺少 README.md。",
             "每个 ModelForge 仓库的根目录必须有 README.md 作为 Model Card。",
-        ]
+        ], None)
 
     try:
         validate_model_card(readme)
+        metadata, _body = parse_frontmatter(readme)
+        return ([], metadata)
     except ModelCardError as e:
-        return [f"[{ref}]"] + str(e).split("\n")
+        return ([f"[{ref}]"] + str(e).split("\n"), None)
 
-    return []
+
+def _extract_best_metric(model_index: list | None) -> tuple[str | None, float | None]:
+    """从 HF model-index 选出"代表性"指标。优先级：mape > rmse > mae > 第一个。"""
+    if not model_index:
+        return None, None
+    candidates: list[tuple[str, float]] = []
+    for entry in model_index:
+        for result in entry.get("results", []):
+            for m in result.get("metrics") or []:
+                name = (m.get("type") or m.get("name") or "").lower()
+                val = m.get("value")
+                if isinstance(val, (int, float)):
+                    candidates.append((name, float(val)))
+    if not candidates:
+        return None, None
+    for preferred in ("mape", "rmse", "mae"):
+        for name, val in candidates:
+            if preferred in name:
+                return preferred, val
+    name, val = candidates[0]
+    return name, val
+
+
+def _persist_card(repo_name: str, sha: str, metadata: dict) -> None:
+    """把 frontmatter 关键字段写入 SQLite。"""
+    repo = db.get_repo(repo_name)
+    if not repo:
+        # 仓库未在 DB 注册（比如裸 git init 出来的）→ 跳过
+        return
+
+    metric_name, metric_value = _extract_best_metric(metadata.get("model-index"))
+    tags = metadata.get("tags") or []
+    card = db.RepoCard(
+        repo_id=repo.id,
+        revision=sha,
+        library_name=metadata.get("library_name"),
+        pipeline_tag=metadata.get("pipeline_tag"),
+        license=metadata.get("license"),
+        tags_json=json.dumps(tags, ensure_ascii=False) if tags else None,
+        base_model=metadata.get("base_model"),
+        best_metric_name=metric_name,
+        best_metric_value=metric_value,
+        updated_at=datetime.utcnow().isoformat(timespec="seconds") + "Z",
+    )
+    db.upsert_repo_card(card)
 
 
 def main() -> int:
@@ -64,7 +114,10 @@ def main() -> int:
         return 0
 
     repo_dir = Path.cwd()
+    repo_name = repo_dir.name.removesuffix(".git")
     all_errors: list[str] = []
+    head_metadata: dict | None = None
+    head_sha: str | None = None
 
     for line in sys.stdin:
         line = line.strip()
@@ -78,8 +131,12 @@ def main() -> int:
         if _is_deletion(new_sha):
             continue
 
-        errors = _validate_ref(repo_dir, new_sha, ref)
+        errors, metadata = _validate_ref(repo_dir, new_sha, ref)
         all_errors.extend(errors)
+        # 只记录 main / master 分支的最新元数据
+        if metadata and ref in ("refs/heads/main", "refs/heads/master"):
+            head_metadata = metadata
+            head_sha = new_sha
 
     if all_errors:
         print("\n" + "=" * 60, file=sys.stderr)
@@ -89,6 +146,13 @@ def main() -> int:
             print(err, file=sys.stderr)
         print("=" * 60, file=sys.stderr)
         return 1
+
+    # 校验通过 → 入库（失败不阻断 push，只打 warning）
+    if head_metadata and head_sha:
+        try:
+            _persist_card(repo_name, head_sha, head_metadata)
+        except Exception as e:
+            print(f"modelforge: warning, failed to index card: {e}", file=sys.stderr)
 
     return 0
 

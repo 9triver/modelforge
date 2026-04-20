@@ -36,6 +36,21 @@ class RepoInfo:
     git_url: str
 
 
+@dataclass
+class SearchResult:
+    name: str
+    owner: str
+    library_name: str | None
+    pipeline_tag: str | None
+    license: str | None
+    tags: list[str]
+    base_model: str | None
+    best_metric_name: str | None
+    best_metric_value: float | None
+    revision: str | None
+    updated_at: str | None
+
+
 class ModelHubError(Exception):
     """所有 SDK 错误的基类。"""
 
@@ -101,7 +116,6 @@ class ModelHub:
         """列出平台上所有仓库。"""
         url = f"{self.endpoint}/api/v1/repos"
         try:
-            # trust_env=False 避免系统 HTTP_PROXY / ALL_PROXY 干扰本地调用
             with httpx.Client(trust_env=False, timeout=30.0) as c:
                 resp = c.get(url, headers=self._auth_headers())
             resp.raise_for_status()
@@ -109,6 +123,64 @@ class ModelHub:
             raise ModelHubError(f"list_repos 请求失败：{e}") from e
 
         return [RepoInfo(**item) for item in resp.json()]
+
+    # ---------- API 1b: search ----------
+
+    def search(
+        self,
+        library: str | None = None,
+        pipeline_tag: str | None = None,
+        license: str | None = None,
+        tag: str | None = None,
+        metric: str | None = None,
+        max_metric: float | None = None,
+        limit: int = 100,
+    ) -> list[SearchResult]:
+        """按 Model Card 字段搜索仓库。
+
+        Examples:
+            hub.search(library="lightgbm", metric="mape", max_metric=4.0)
+            hub.search(tag="time-series-forecasting")
+        """
+        params: dict = {}
+        if library:
+            params["library"] = library
+        if pipeline_tag:
+            params["pipeline_tag"] = pipeline_tag
+        if license:
+            params["license"] = license
+        if tag:
+            params["tag"] = tag
+        if metric:
+            params["metric"] = metric
+        if max_metric is not None:
+            params["max_metric"] = max_metric
+        params["limit"] = limit
+
+        url = f"{self.endpoint}/api/v1/repos/search"
+        try:
+            with httpx.Client(trust_env=False, timeout=30.0) as c:
+                resp = c.get(url, params=params, headers=self._auth_headers())
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            raise ModelHubError(f"search 请求失败：{e}") from e
+
+        return [
+            SearchResult(
+                name=item["name"],
+                owner=item["owner"],
+                library_name=item.get("library_name"),
+                pipeline_tag=item.get("pipeline_tag"),
+                license=item.get("license"),
+                tags=item.get("tags", []),
+                base_model=item.get("base_model"),
+                best_metric_name=item.get("best_metric_name"),
+                best_metric_value=item.get("best_metric_value"),
+                revision=item.get("revision"),
+                updated_at=item.get("updated_at"),
+            )
+            for item in resp.json()
+        ]
 
     # ---------- API 2: snapshot_download ----------
 
