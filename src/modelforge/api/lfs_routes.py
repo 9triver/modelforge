@@ -13,10 +13,10 @@
 """
 from __future__ import annotations
 
-import hashlib
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Header, Request, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .. import db, lfs_store, storage
@@ -133,24 +133,23 @@ async def lfs_upload(
     request: Request,
     authorization: str | None = Header(None),
 ):
-    """接收 LFS 物件上传。"""
+    """流式接收 LFS 物件，边写边算 SHA256。"""
     authenticate(authorization)
 
     settings = get_settings()
-    body = await request.body()
 
-    if len(body) > settings.lfs_max_object_size:
-        raise HTTPException(413, f"Object too large (max {settings.lfs_max_object_size} bytes)")
-
-    # 校验 SHA256
-    actual_sha = hashlib.sha256(body).hexdigest()
-    if actual_sha != oid:
-        raise HTTPException(
-            422,
-            f"SHA256 mismatch: expected {oid}, got {actual_sha}",
+    try:
+        _path, total = await lfs_store.write_stream(
+            oid, request.stream(), max_size=settings.lfs_max_object_size,
         )
+    except ValueError as e:
+        msg = str(e)
+        if "mismatch" in msg:
+            raise HTTPException(422, msg)
+        if "too large" in msg:
+            raise HTTPException(413, msg)
+        raise HTTPException(400, msg)
 
-    lfs_store.write(oid, body)
     return Response(status_code=200)
 
 
@@ -158,14 +157,16 @@ async def lfs_upload(
 
 @router.get("/{repo_name}.git/lfs/objects/{oid}")
 async def lfs_download(repo_name: str, oid: str):
-    """返回 LFS 物件内容。"""
-    data = lfs_store.read(oid)
-    if data is None:
+    """流式返回 LFS 物件内容。"""
+    chunks = lfs_store.read_chunks(oid)
+    if chunks is None:
         raise HTTPException(404, f"LFS object {oid} not found")
-    return Response(
-        content=data,
+
+    obj_size = lfs_store.size(oid)
+    return StreamingResponse(
+        chunks,
         media_type="application/octet-stream",
-        headers={"Content-Length": str(len(data))},
+        headers={"Content-Length": str(obj_size)},
     )
 
 
