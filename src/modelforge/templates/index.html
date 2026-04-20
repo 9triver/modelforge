@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}ModelForge — 模型仓库{% endblock %}
+{% block content %}
+<div class="mb-6 flex items-baseline justify-between">
+    <h1 class="text-2xl font-bold">所有模型</h1>
+    <div class="text-sm text-gray-500">共 {{ repos|length }} 个</div>
+</div>
+
+{% if not repos %}
+<div class="bg-white rounded-lg p-8 text-center text-gray-500">
+    <p>还没有任何仓库</p>
+    <p class="text-xs mt-2">使用 <code class="bg-gray-100 px-2 py-1 rounded">modelforge repo create &lt;name&gt; &lt;owner&gt;</code> 创建第一个</p>
+</div>
+{% else %}
+<ul class="space-y-3">
+    {% for r in repos %}
+    <li>
+        <a href="/{{ r.name }}" class="block bg-white rounded-lg border border-gray-200 hover:border-amber-400 hover:shadow-sm transition p-4">
+            <div class="flex items-start justify-between mb-1">
+                <div class="font-semibold text-lg text-blue-700">{{ r.name }}</div>
+                <div class="text-xs text-gray-400">{{ r.owner }} · {{ r.created_at[:10] }}</div>
+            </div>
+            {% if r.metadata %}
+            <div class="mt-2 flex flex-wrap gap-3 text-xs items-center">
+                {% if r.metadata.library_name %}
+                <span class="bg-purple-50 text-purple-700 px-2 py-0.5 rounded border border-purple-200">{{ r.metadata.library_name }}</span>
+                {% endif %}
+                {% if r.metadata.pipeline_tag %}
+                <span class="bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200">{{ r.metadata.pipeline_tag }}</span>
+                {% endif %}
+                {% if r.metadata.license %}
+                <span class="text-gray-500">license: {{ r.metadata.license }}</span>
+                {% endif %}
+                {% for t in r.metadata.tags[:5] %}
+                <span class="bg-gray-100 text-gray-600 px-2 py-0.5 rounded">{{ t }}</span>
+                {% endfor %}
+            </div>
+            {% elif r.error %}
+            <div class="mt-2 text-xs text-red-500">Model Card 解析失败: {{ r.error }}</div>
+            {% else %}
+            <div class="mt-2 text-xs text-gray-400 italic">空仓库</div>
+            {% endif %}
+        </a>
+    </li>
+    {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

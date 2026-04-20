@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}ModelForge{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .card-markdown h1 { font-size: 1.75rem; font-weight: 700; margin: 1rem 0; }
+        .card-markdown h2 { font-size: 1.35rem; font-weight: 600; margin: 1rem 0 0.5rem; }
+        .card-markdown h3 { font-size: 1.1rem; font-weight: 600; margin: 0.75rem 0 0.3rem; }
+        .card-markdown p { margin: 0.5rem 0; line-height: 1.7; }
+        .card-markdown code { background: #f3f4f6; padding: 0.15rem 0.35rem; border-radius: 0.25rem; font-size: 0.9em; }
+        .card-markdown pre { background: #1f2937; color: #f3f4f6; padding: 0.75rem 1rem; border-radius: 0.5rem; overflow-x: auto; margin: 0.75rem 0; }
+        .card-markdown pre code { background: transparent; padding: 0; }
+        .card-markdown ul { list-style: disc; margin-left: 1.5rem; }
+        .card-markdown ol { list-style: decimal; margin-left: 1.5rem; }
+        .card-markdown li { margin: 0.25rem 0; }
+        .card-markdown table { border-collapse: collapse; margin: 0.75rem 0; }
+        .card-markdown th, .card-markdown td { border: 1px solid #d1d5db; padding: 0.4rem 0.75rem; }
+        .card-markdown th { background: #f9fafb; font-weight: 600; }
+        .card-markdown a { color: #2563eb; text-decoration: underline; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-900 min-h-screen">
+    <nav class="bg-gray-900 text-white px-6 py-3 shadow">
+        <div class="max-w-5xl mx-auto flex items-center justify-between">
+            <a href="/" class="flex items-center gap-2 text-lg font-semibold">
+                <span class="text-amber-400">⚒</span>
+                <span>ModelForge</span>
+            </a>
+            <div class="text-xs text-gray-400">v{{ version }}</div>
+        </div>
+    </nav>
+    <main class="max-w-5xl mx-auto px-6 py-6">
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>
