@@ -92,3 +92,20 @@ def has_any_commits(repo_name: str) -> bool:
         return True
     except FileNotFoundError:
         return False
+
+
+def list_refs(repo_name: str) -> dict[str, list[str]]:
+    """列出仓库的分支和 tag。返回 {"branches": [...], "tags": [...]}。"""
+    branches: list[str] = []
+    tags: list[str] = []
+    try:
+        output = _git(repo_name, "for-each-ref", "--format=%(refname)", "refs/heads/", "refs/tags/")
+    except FileNotFoundError:
+        return {"branches": branches, "tags": tags}
+    for line in output.splitlines():
+        line = line.strip()
+        if line.startswith("refs/heads/"):
+            branches.append(line.removeprefix("refs/heads/"))
+        elif line.startswith("refs/tags/"):
+            tags.append(line.removeprefix("refs/tags/"))
+    return {"branches": branches, "tags": tags}

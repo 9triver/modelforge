@@ -82,6 +82,28 @@
             {% endif %}
         {% else %}
             <!-- Files tab -->
+            <!-- Branch / Tag 切换器 -->
+            <div class="flex items-center gap-3 mb-4">
+                <div class="relative">
+                    <select onchange="window.location.href='/{{ repo.name }}?tab=files&revision='+this.value"
+                            class="appearance-none bg-white border border-gray-300 rounded-lg pl-3 pr-8 py-1.5 text-sm font-mono cursor-pointer hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-amber-300">
+                        {% for b in refs.branches %}
+                        <option value="{{ b }}" {% if revision == b %}selected{% endif %}>🔀 {{ b }}</option>
+                        {% endfor %}
+                        {% for t in refs.tags %}
+                        <option value="{{ t }}" {% if revision == t %}selected{% endif %}>🏷 {{ t }}</option>
+                        {% endfor %}
+                    </select>
+                    <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2 text-gray-400">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                    </div>
+                </div>
+                <span class="text-xs text-gray-400">
+                    {{ refs.branches|length }} branch{{ 'es' if refs.branches|length != 1 }}
+                    · {{ refs.tags|length }} tag{{ 's' if refs.tags|length != 1 }}
+                </span>
+            </div>
+
             {% if files %}
             <div class="bg-white rounded-lg border border-gray-200">
                 <ul class="text-sm divide-y divide-gray-100">

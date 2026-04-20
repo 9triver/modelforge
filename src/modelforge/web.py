@@ -202,6 +202,8 @@ def repo_detail(request: Request, repo_name: str, revision: str = "main", tab: s
                 "size_human": _human_size(f.size),
             })
 
+    refs = repo_reader.list_refs(repo_name)
+
     host = request.headers.get("host", "localhost")
     scheme = request.url.scheme
     git_url = f"{scheme}://{host}/{repo_name}.git"
@@ -214,6 +216,7 @@ def repo_detail(request: Request, repo_name: str, revision: str = "main", tab: s
             "revision": revision,
             "tab": tab if tab in ("card", "files") else "card",
             "git_url": git_url,
+            "refs": refs,
             "repo": {
                 "name": repo_name,
                 "owner": owner.name if owner else "<unknown>",
