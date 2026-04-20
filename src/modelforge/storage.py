@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .config import get_settings
 
-REPO_NAME_RE = re.compile(r"^[\w\u4e00-\u9fff][\w\u4e00-\u9fff._-]{0,63}$")
+REPO_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 class RepoStorageError(Exception):
@@ -20,6 +20,7 @@ def validate_repo_name(name: str) -> None:
         raise RepoStorageError(
             f"Invalid repo name '{name}'. "
             "允许字母数字、点、下划线、连字符；长度 1-64；首字符必须是字母数字。"
+            "（本地化名称请放在 Model Card tags 中）"
         )
 
 
