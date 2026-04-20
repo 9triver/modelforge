@@ -103,6 +103,105 @@ model-index:
 
 frontmatter 必填字段：`license`、`library_name`、`tags`（至少一个）。push 时服务端自动校验，不合规则拒绝并返回详细错误信息。
 
+## 架构
+
+```
+                          ┌─────────────────────────────────────────────────────────┐
+                          │                    FastAPI Server                       │
+                          │                    (server.py)                          │
+                          │                                                         │
+  ┌──────────┐            │  ┌──────────────────────────────────────────────────┐   │
+  │ Browser  │───GET /───▶│  │  Web UI (web.py)                                │   │
+  │          │◀──HTML─────│  │  / 模型列表（搜索/过滤）  /{repo} 详情页        │   │
+  └──────────┘            │  │       │                        │                 │   │
+                          │  │       ▼                        ▼                 │   │
+                          │  │  db.search_repos()      repo_reader.py          │   │
+                          │  │                         ├ read_file()            │   │
+                          │  │                         ├ list_files()           │   │
+                          │  │                         └ has_any_commits()      │   │
+                          │  └──────────────────────────────────────────────────┘   │
+                          │                                                         │
+  ┌──────────┐            │  ┌──────────────────────────────────────────────────┐   │
+  │ Python   │──search()─▶│  │  REST API (api/repos.py)                        │   │
+  │ SDK      │◀──JSON─────│  │  POST /api/v1/repos          创建仓库           │   │
+  │(client.py│            │  │  GET  /api/v1/repos           列表               │   │
+  │          │            │  │  GET  /api/v1/repos/search    搜索               │   │
+  └──────────┘            │  │  DELETE /api/v1/repos/{name}  删除               │   │
+       │                  │  └──────────────────────────────────────────────────┘   │
+       │                  │                                                         │
+       │                  │  ┌──────────────────────────────────────────────────┐   │
+       │ git push/clone   │  │  Git Smart HTTP (api/git_routes.py)             │   │
+  ┌────┴─────┐            │  │                                                  │   │
+  │ Git      │──HTTP──────│  │  GET  /{repo}.git/info/refs                     │   │
+  │ Client   │◀───────────│  │  POST /{repo}.git/git-upload-pack   (clone)     │   │
+  │          │            │  │  POST /{repo}.git/git-receive-pack  (push)      │   │
+  └────┬─────┘            │  │       │                                          │   │
+       │                  │  │       ▼                                          │   │
+       │                  │  │  ┌──────────────────────┐                        │   │
+       │                  │  │  │  git-http-backend     │  系统 CGI 程序        │   │
+       │                  │  │  │  (subprocess)         │                        │   │
+       │                  │  │  └──────────┬───────────┘                        │   │
+       │                  │  └─────────────│────────────────────────────────────┘   │
+       │                  │                │                                         │
+       │                  │                ▼  push 时触发                            │
+       │                  │  ┌──────────────────────────────────────────────────┐   │
+       │                  │  │  Pre-Receive Hook (hooks/pre_receive.py)         │   │
+       │                  │  │                                                  │   │
+       │                  │  │  stdin: <old-sha> <new-sha> <ref>               │   │
+       │                  │  │       │                                          │   │
+       │                  │  │       ▼                                          │   │
+       │                  │  │  git show {sha}:README.md                        │   │
+       │                  │  │       │                                          │   │
+       │                  │  │       ▼                                          │   │
+       │                  │  │  schema.validate_model_card()                    │   │
+       │                  │  │       │                                          │   │
+       │                  │  │       ├── 失败 → exit 1（push 被拒绝）          │   │
+       │                  │  │       │                                          │   │
+       │                  │  │       └── 成功 → db.upsert_repo_card()          │   │
+       │                  │  │                  （frontmatter 入库供搜索）      │   │
+       │                  │  └──────────────────────────────────────────────────┘   │
+       │                  │                                                         │
+       │ git lfs          │  ┌──────────────────────────────────────────────────┐   │
+       │ push/pull        │  │  LFS Batch API (api/lfs_routes.py)              │   │
+       └──────────────────│  │                                                  │   │
+                          │  │  POST /{repo}.git/info/lfs/objects/batch         │   │
+                          │  │  PUT  /{repo}.git/lfs/objects/{oid}   (upload)   │   │
+                          │  │  GET  /{repo}.git/lfs/objects/{oid}   (download) │   │
+                          │  │  POST /{repo}.git/lfs/verify                     │   │
+                          │  └──────────────────────────────────────────────────┘   │
+                          │                                                         │
+                          │  ┌────────────┐  ┌──────────┐  ┌───────────────────┐   │
+                          │  │  auth.py    │  │ config.py│  │ storage.py        │   │
+                          │  │ Token 认证  │  │ 全局配置 │  │ 裸仓库管理+Hook  │   │
+                          │  └────────────┘  └──────────┘  └───────────────────┘   │
+                          └─────────────────────────┬───────────────────────────────┘
+                                                    │
+                          ┌─────────────────────────▼───────────────────────────────┐
+                          │                    数据层                                │
+                          │                                                         │
+                          │  modelforge.db          repos/              lfs/        │
+                          │  ┌──────────────┐       ┌──────────────┐   ┌────────┐  │
+                          │  │ users        │       │ model.git/   │   │ ab/    │  │
+                          │  │ tokens       │       │  ├ objects/   │   │  cd/   │  │
+                          │  │ repos        │       │  ├ refs/      │   │   {oid}│  │
+                          │  │ repo_cards   │       │  └ hooks/     │   │        │  │
+                          │  │  (搜索索引)  │       │    pre-receive│   │        │  │
+                          │  └──────────────┘       └──────────────┘   └────────┘  │
+                          │     SQLite                裸 Git 仓库       LFS 物件池  │
+                          └─────────────────────────────────────────────────────────┘
+```
+
+### 关键数据流
+
+| 场景 | 路径 |
+|------|------|
+| `git clone` | Git Client → `git_routes` → `git-http-backend` → 裸仓库 |
+| `git push` | Git Client → `git_routes` → `auth` → `git-http-backend` → 裸仓库 → `pre-receive hook` → `schema` 校验 → `db` 入库 |
+| `git lfs push` | Git Client → `lfs_routes` → `auth` → `lfs_store` 写入 LFS 物件池 |
+| `hub.search()` | SDK → `repos.py /search` → `db.search_repos()` → `repo_cards` 表 |
+| `hub.upload_folder()` | SDK → 本地校验 → `git clone` + 覆盖 + `git push`（触发上述 push 流程） |
+| 浏览器访问 | Browser → `web.py` → `repo_reader`（`git show`）→ `schema.parse_frontmatter` → Jinja2 渲染 |
+
 ## 存储结构
 
 ```
