@@ -1,13 +1,14 @@
 """ModelForge 只读 Web UI：模型列表 + 详情。
 
 路由：
-  GET  /                    首页（所有仓库列表，带元数据预览）
-  GET  /{repo_name}         详情（Model Card 元数据表 + 渲染后的 README body + 文件清单）
+  GET  /                    首页（左侧 faceted filter + 模型卡片列表）
+  GET  /{repo_name}         详情（侧边栏元数据 + Tab 切换 Model Card / Files）
 
 Markdown 用 markdown-it-py 渲染；YAML frontmatter 复用 schema.parse_frontmatter。
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -69,18 +70,51 @@ def _flatten_model_index(model_index: list | None) -> list[dict]:
     return rows
 
 
+def _collect_facets() -> dict:
+    """从 repo_cards 表收集可用的 facet 选项。"""
+    all_pairs = db.search_repos(limit=500)
+    libraries: set[str] = set()
+    tasks: set[str] = set()
+    licenses: set[str] = set()
+    tags: set[str] = set()
+    for _repo, card in all_pairs:
+        if not card:
+            continue
+        if card.library_name:
+            libraries.add(card.library_name)
+        if card.pipeline_tag:
+            tasks.add(card.pipeline_tag)
+        if card.license:
+            licenses.add(card.license)
+        if card.tags_json:
+            try:
+                for t in json.loads(card.tags_json):
+                    tags.add(t)
+            except json.JSONDecodeError:
+                pass
+    return {
+        "libraries": sorted(libraries),
+        "tasks": sorted(tasks),
+        "licenses": sorted(licenses),
+        "tags": sorted(tags),
+    }
+
+
 # ---------- / 首页 ----------
 
 @router.get("/", response_class=HTMLResponse)
 def index(
     request: Request,
     library: str | None = None,
+    task: str | None = None,
     tag: str | None = None,
     max_mape: float | None = None,
 ):
-    if library or tag or max_mape is not None:
+    has_filter = library or task or tag or max_mape is not None
+    if has_filter:
         pairs = db.search_repos(
             library_name=library,
+            pipeline_tag=task,
             tag=tag,
             max_metric=max_mape,
             metric_name="mape" if max_mape is not None else None,
@@ -112,13 +146,17 @@ def index(
                 "error": preview["error"],
             })
 
+    facets = _collect_facets()
+
     return templates.TemplateResponse(
         request=request,
         name="index.html",
         context={
             "repos": repos,
             "version": __version__,
+            "facets": facets,
             "filter_library": library or "",
+            "filter_task": task or "",
             "filter_tag": tag or "",
             "filter_max_mape": max_mape if max_mape is not None else "",
         },
@@ -128,8 +166,7 @@ def index(
 # ---------- /{repo_name} 详情 ----------
 
 @router.get("/{repo_name}", response_class=HTMLResponse)
-def repo_detail(request: Request, repo_name: str, revision: str = "main"):
-    # 排除已被其他路由处理的路径
+def repo_detail(request: Request, repo_name: str, revision: str = "main", tab: str = "card"):
     if repo_name in ("healthz", "version", "docs", "redoc", "openapi.json"):
         raise HTTPException(404)
 
@@ -138,7 +175,6 @@ def repo_detail(request: Request, repo_name: str, revision: str = "main"):
         raise HTTPException(404, f"Repository '{repo_name}' not found")
     owner = db.get_user_by_id(repo_row.owner_id)
 
-    # 读取 Model Card
     metadata = None
     body_html = None
     body_error = None
@@ -157,7 +193,6 @@ def repo_detail(request: Request, repo_name: str, revision: str = "main"):
             except ModelCardError as e:
                 body_error = str(e)
 
-    # 文件清单
     files = []
     if repo_reader.has_any_commits(repo_name):
         for f in repo_reader.list_files(repo_name, revision):
@@ -167,7 +202,6 @@ def repo_detail(request: Request, repo_name: str, revision: str = "main"):
                 "size_human": _human_size(f.size),
             })
 
-    # Git URL（用户拷贝粘贴）
     host = request.headers.get("host", "localhost")
     scheme = request.url.scheme
     git_url = f"{scheme}://{host}/{repo_name}.git"
@@ -178,6 +212,7 @@ def repo_detail(request: Request, repo_name: str, revision: str = "main"):
         context={
             "version": __version__,
             "revision": revision,
+            "tab": tab if tab in ("card", "files") else "card",
             "git_url": git_url,
             "repo": {
                 "name": repo_name,
