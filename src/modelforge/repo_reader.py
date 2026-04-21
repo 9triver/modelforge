@@ -93,6 +93,38 @@ def has_any_commits(namespace: str, name: str) -> bool:
         return False
 
 
+def resolve_revision(namespace: str, name: str, revision: str) -> str:
+    """把 'main' / tag / short sha 解析成完整 commit sha。"""
+    return _git(namespace, name, "rev-parse", revision).strip()
+
+
+def checkout_to_dir(namespace: str, name: str, revision: str, dest: Path) -> None:
+    """把裸仓库的某 revision 内容释放到 dest 目录。
+
+    不做真正的 clone（省磁盘），用 `git archive | tar` pipe。
+    LFS 指针文件**不会**被替换成真实大文件——caller 如需要 LFS 内容，
+    要另行通过 lfs_store 取。
+    """
+    dest.mkdir(parents=True, exist_ok=True)
+    bare = storage.repo_path(namespace, name)
+    # git archive 输出 tar，交给 tar -x 解压
+    archive = subprocess.Popen(
+        ["git", f"--git-dir={bare}", "archive", revision],
+        stdout=subprocess.PIPE,
+    )
+    tar = subprocess.Popen(
+        ["tar", "-x", "-C", str(dest)],
+        stdin=archive.stdout,
+    )
+    archive.stdout.close()  # SIGPIPE 给 archive 进程
+    tar_rc = tar.wait()
+    archive_rc = archive.wait()
+    if archive_rc != 0 or tar_rc != 0:
+        raise RuntimeError(
+            f"checkout failed: git archive rc={archive_rc}, tar rc={tar_rc}"
+        )
+
+
 def list_refs(namespace: str, name: str) -> dict[str, list[str]]:
     """列出仓库的分支和 tag。返回 {"branches": [...], "tags": [...]}。"""
     branches: list[str] = []
