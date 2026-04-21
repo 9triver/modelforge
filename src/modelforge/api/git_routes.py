@@ -61,12 +61,12 @@ def _require_write_auth(authorization: str | None) -> db.User:
     return authenticate(authorization)
 
 
-def _ensure_repo(name: str) -> None:
-    repo = db.get_repo(name)
+def _ensure_repo(namespace: str, name: str) -> None:
+    repo = db.get_repo(namespace, name)
     if not repo:
-        raise HTTPException(404, f"Repository '{name}' not found")
-    if not storage.repo_exists_on_disk(name):
-        raise HTTPException(500, f"Repository '{name}' metadata exists but directory missing")
+        raise HTTPException(404, f"Repository '{namespace}/{name}' not found")
+    if not storage.repo_exists_on_disk(namespace, name):
+        raise HTTPException(500, f"Repository '{namespace}/{name}' metadata exists but directory missing")
 
 
 def _parse_cgi_headers(raw: bytes) -> tuple[int, dict[str, str], bytes]:
@@ -178,18 +178,19 @@ async def _run_git_http_backend_streaming(
     )
 
 
-@router.get("/{repo_name}.git/info/refs")
+@router.get("/{namespace}/{name}.git/info/refs")
 async def git_info_refs(
-    repo_name: str,
+    namespace: str,
+    name: str,
     request: Request,
     service: Optional[str] = None,
 ):
-    _ensure_repo(repo_name)
+    _ensure_repo(namespace, name)
     if service == "git-receive-pack":
         _require_write_auth(request.headers.get("authorization"))
 
     return await _run_git_http_backend_streaming(
-        path_info=f"/{repo_name}.git/info/refs",
+        path_info=f"/{namespace}/{name}.git/info/refs",
         query_string=f"service={service}" if service else "",
         request_method="GET",
         content_type=request.headers.get("content-type", ""),
@@ -197,11 +198,11 @@ async def git_info_refs(
     )
 
 
-@router.post("/{repo_name}.git/git-upload-pack")
-async def git_upload_pack(repo_name: str, request: Request):
-    _ensure_repo(repo_name)
+@router.post("/{namespace}/{name}.git/git-upload-pack")
+async def git_upload_pack(namespace: str, name: str, request: Request):
+    _ensure_repo(namespace, name)
     return await _run_git_http_backend_streaming(
-        path_info=f"/{repo_name}.git/git-upload-pack",
+        path_info=f"/{namespace}/{name}.git/git-upload-pack",
         query_string="",
         request_method="POST",
         content_type=request.headers.get("content-type", "application/x-git-upload-pack-request"),
@@ -210,13 +211,13 @@ async def git_upload_pack(repo_name: str, request: Request):
     )
 
 
-@router.post("/{repo_name}.git/git-receive-pack")
-async def git_receive_pack(repo_name: str, request: Request):
-    _ensure_repo(repo_name)
+@router.post("/{namespace}/{name}.git/git-receive-pack")
+async def git_receive_pack(namespace: str, name: str, request: Request):
+    _ensure_repo(namespace, name)
     _require_write_auth(request.headers.get("authorization"))
 
     return await _run_git_http_backend_streaming(
-        path_info=f"/{repo_name}.git/git-receive-pack",
+        path_info=f"/{namespace}/{name}.git/git-receive-pack",
         query_string="",
         request_method="POST",
         content_type=request.headers.get("content-type", "application/x-git-receive-pack-request"),

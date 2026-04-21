@@ -99,25 +99,37 @@ def token_revoke(token: str):
 
 # ---------- repo ----------
 
+def _split_repo(repo: str) -> tuple[str, str]:
+    if "/" not in repo:
+        console.print(f"[red]仓库名必须是 'namespace/name' 格式[/red]: {repo}")
+        raise typer.Exit(1)
+    ns, name = repo.split("/", 1)
+    if not ns or not name or "/" in name:
+        console.print(f"[red]无效的仓库名[/red]: {repo}")
+        raise typer.Exit(1)
+    return ns, name
+
+
 @repo_app.command("create")
-def repo_create(name: str, owner: str, private: bool = typer.Option(False, "--private")):
-    """创建仓库（CLI 直接调，不需要 Token）。"""
+def repo_create(repo: str, owner: str, private: bool = typer.Option(False, "--private")):
+    """创建仓库。仓库名格式 'namespace/name'，例如 amazon/chronos-bolt-tiny。"""
     from . import storage
+    namespace, name = _split_repo(repo)
     user = db.get_user_by_name(owner)
     if not user:
         console.print(f"[red]Owner '{owner}' 不存在[/red]")
         raise typer.Exit(1)
-    if db.get_repo(name):
-        console.print(f"[red]仓库 '{name}' 已存在[/red]")
+    if db.get_repo(namespace, name):
+        console.print(f"[red]仓库 '{repo}' 已存在[/red]")
         raise typer.Exit(1)
     try:
-        storage.create_bare_repo(name)
+        storage.create_bare_repo(namespace, name)
     except storage.RepoStorageError as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(1)
-    db.create_repo(name, owner_id=user.id, is_private=private)
-    console.print(f"[green]✓ 仓库已创建[/green]: {name}")
-    console.print(f"  路径: {storage.repo_path(name)}")
+    db.create_repo(namespace, name, owner_id=user.id, is_private=private)
+    console.print(f"[green]✓ 仓库已创建[/green]: {repo}")
+    console.print(f"  路径: {storage.repo_path(namespace, name)}")
 
 
 @repo_app.command("list")
@@ -127,14 +139,14 @@ def repo_list():
         console.print("[dim]无仓库[/dim]")
         return
     table = Table(title="Repositories")
-    table.add_column("Name")
+    table.add_column("Repo")
     table.add_column("Owner")
     table.add_column("Private")
     table.add_column("Created")
     for r in repos:
         owner = db.get_user_by_id(r.owner_id)
         table.add_row(
-            r.name,
+            r.full_name,
             owner.name if owner else "<orphan>",
             "Yes" if r.is_private else "No",
             r.created_at,
@@ -143,14 +155,16 @@ def repo_list():
 
 
 @repo_app.command("delete")
-def repo_delete(name: str):
+def repo_delete(repo: str):
+    """删除仓库。仓库名格式 'namespace/name'。"""
     from . import storage
-    if not db.get_repo(name):
-        console.print(f"[red]仓库 '{name}' 不存在[/red]")
+    namespace, name = _split_repo(repo)
+    if not db.get_repo(namespace, name):
+        console.print(f"[red]仓库 '{repo}' 不存在[/red]")
         raise typer.Exit(1)
-    db.delete_repo(name)
-    storage.delete_bare_repo(name)
-    console.print(f"[green]✓ 仓库已删除[/green]: {name}")
+    db.delete_repo(namespace, name)
+    storage.delete_bare_repo(namespace, name)
+    console.print(f"[green]✓ 仓库已删除[/green]: {repo}")
 
 
 if __name__ == "__main__":

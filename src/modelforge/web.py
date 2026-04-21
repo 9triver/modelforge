@@ -37,11 +37,11 @@ def _human_size(n: int) -> str:
     return f"{n:.1f} PB"
 
 
-def _get_repo_preview(repo_name: str) -> dict:
+def _get_repo_preview(namespace: str, name: str) -> dict:
     """尝试读 README.md 并解析 frontmatter。出错返回 error 字段。"""
-    if not repo_reader.has_any_commits(repo_name):
+    if not repo_reader.has_any_commits(namespace, name):
         return {"metadata": None, "error": None}
-    readme = repo_reader.read_file(repo_name, "HEAD", "README.md")
+    readme = repo_reader.read_file(namespace, name, "HEAD", "README.md")
     if readme is None:
         return {"metadata": None, "error": "README.md 缺失"}
     try:
@@ -122,9 +122,11 @@ def index(
         repos = []
         for r, card in pairs:
             owner = db.get_user_by_id(r.owner_id)
-            preview = _get_repo_preview(r.name)
+            preview = _get_repo_preview(r.namespace, r.name)
             repos.append({
+                "namespace": r.namespace,
                 "name": r.name,
+                "full_name": r.full_name,
                 "owner": owner.name if owner else "<unknown>",
                 "is_private": r.is_private,
                 "created_at": r.created_at,
@@ -136,9 +138,11 @@ def index(
         repos = []
         for r in repos_raw:
             owner = db.get_user_by_id(r.owner_id)
-            preview = _get_repo_preview(r.name)
+            preview = _get_repo_preview(r.namespace, r.name)
             repos.append({
+                "namespace": r.namespace,
                 "name": r.name,
+                "full_name": r.full_name,
                 "owner": owner.name if owner else "<unknown>",
                 "is_private": r.is_private,
                 "created_at": r.created_at,
@@ -163,26 +167,28 @@ def index(
     )
 
 
-# ---------- /{repo_name} 详情 ----------
+# ---------- /{namespace}/{name} 详情 ----------
 
-@router.get("/{repo_name}", response_class=HTMLResponse)
-def repo_detail(request: Request, repo_name: str, revision: str = "main", tab: str = "card"):
-    if repo_name in ("healthz", "version", "docs", "redoc", "openapi.json"):
+@router.get("/{namespace}/{name}", response_class=HTMLResponse)
+def repo_detail(request: Request, namespace: str, name: str, revision: str = "main", tab: str = "card"):
+    # 排除可能冲突的顶层路径（api、healthz 等由 prefix 已区分；此处兜底）
+    if namespace in ("api", "healthz", "version", "docs", "redoc", "openapi.json", "static"):
         raise HTTPException(404)
 
-    repo_row = db.get_repo(repo_name)
+    repo_row = db.get_repo(namespace, name)
     if not repo_row:
-        raise HTTPException(404, f"Repository '{repo_name}' not found")
+        raise HTTPException(404, f"Repository '{namespace}/{name}' not found")
     owner = db.get_user_by_id(repo_row.owner_id)
+    full_name = repo_row.full_name
 
     metadata = None
     body_html = None
     body_error = None
     model_index_rows: list[dict] = []
-    if not repo_reader.has_any_commits(repo_name):
+    if not repo_reader.has_any_commits(namespace, name):
         body_error = "仓库为空，尚未推送任何内容"
     else:
-        readme = repo_reader.read_file(repo_name, revision, "README.md")
+        readme = repo_reader.read_file(namespace, name, revision, "README.md")
         if readme is None:
             body_error = f"在 revision '{revision}' 下未找到 README.md"
         else:
@@ -194,19 +200,19 @@ def repo_detail(request: Request, repo_name: str, revision: str = "main", tab: s
                 body_error = str(e)
 
     files = []
-    if repo_reader.has_any_commits(repo_name):
-        for f in repo_reader.list_files(repo_name, revision):
+    if repo_reader.has_any_commits(namespace, name):
+        for f in repo_reader.list_files(namespace, name, revision):
             files.append({
                 "path": f.path,
                 "is_lfs": f.is_lfs,
                 "size_human": _human_size(f.size),
             })
 
-    refs = repo_reader.list_refs(repo_name)
+    refs = repo_reader.list_refs(namespace, name)
 
     host = request.headers.get("host", "localhost")
     scheme = request.url.scheme
-    git_url = f"{scheme}://{host}/{repo_name}.git"
+    git_url = f"{scheme}://{host}/{full_name}.git"
 
     return templates.TemplateResponse(
         request=request,
@@ -218,7 +224,9 @@ def repo_detail(request: Request, repo_name: str, revision: str = "main", tab: s
             "git_url": git_url,
             "refs": refs,
             "repo": {
-                "name": repo_name,
+                "namespace": namespace,
+                "name": name,
+                "full_name": full_name,
                 "owner": owner.name if owner else "<unknown>",
                 "created_at": repo_row.created_at,
             },

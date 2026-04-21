@@ -30,10 +30,12 @@ CREATE TABLE IF NOT EXISTS tokens (
 
 CREATE TABLE IF NOT EXISTS repos (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    name        TEXT UNIQUE NOT NULL,         -- 仓库名（不含 .git 后缀）
+    namespace   TEXT NOT NULL,                -- 命名空间（如 amazon / jiangsu / chun）
+    name        TEXT NOT NULL,                -- 仓库名（不含 .git 后缀）
     owner_id    INTEGER NOT NULL,
     is_private  INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT NOT NULL,
+    UNIQUE(namespace, name),
     FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -77,10 +79,15 @@ class Token:
 @dataclass
 class Repo:
     id: int
+    namespace: str
     name: str
     owner_id: int
     is_private: bool
     created_at: str
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.namespace}/{self.name}"
 
 
 @dataclass
@@ -173,45 +180,48 @@ def revoke_token(token: str) -> bool:
 
 # ---------- 仓库 ----------
 
-def create_repo(name: str, owner_id: int, is_private: bool = False) -> Repo:
+def _row_to_repo(row) -> Repo:
+    return Repo(
+        id=row["id"], namespace=row["namespace"], name=row["name"],
+        owner_id=row["owner_id"], is_private=bool(row["is_private"]),
+        created_at=row["created_at"],
+    )
+
+
+def create_repo(namespace: str, name: str, owner_id: int, is_private: bool = False) -> Repo:
     with connect() as c:
         c.execute(
-            "INSERT INTO repos (name, owner_id, is_private, created_at) VALUES (?, ?, ?, ?)",
-            (name, owner_id, int(is_private), _now()),
+            "INSERT INTO repos (namespace, name, owner_id, is_private, created_at) VALUES (?, ?, ?, ?, ?)",
+            (namespace, name, owner_id, int(is_private), _now()),
         )
-        row = c.execute("SELECT * FROM repos WHERE name = ?", (name,)).fetchone()
-        return Repo(
-            id=row["id"], name=row["name"], owner_id=row["owner_id"],
-            is_private=bool(row["is_private"]), created_at=row["created_at"],
-        )
+        row = c.execute(
+            "SELECT * FROM repos WHERE namespace = ? AND name = ?",
+            (namespace, name),
+        ).fetchone()
+        return _row_to_repo(row)
 
 
-def get_repo(name: str) -> Repo | None:
+def get_repo(namespace: str, name: str) -> Repo | None:
     with connect() as c:
-        row = c.execute("SELECT * FROM repos WHERE name = ?", (name,)).fetchone()
-        if not row:
-            return None
-        return Repo(
-            id=row["id"], name=row["name"], owner_id=row["owner_id"],
-            is_private=bool(row["is_private"]), created_at=row["created_at"],
-        )
+        row = c.execute(
+            "SELECT * FROM repos WHERE namespace = ? AND name = ?",
+            (namespace, name),
+        ).fetchone()
+        return _row_to_repo(row) if row else None
 
 
 def list_repos() -> list[Repo]:
     with connect() as c:
-        rows = c.execute("SELECT * FROM repos ORDER BY name").fetchall()
-        return [
-            Repo(
-                id=r["id"], name=r["name"], owner_id=r["owner_id"],
-                is_private=bool(r["is_private"]), created_at=r["created_at"],
-            )
-            for r in rows
-        ]
+        rows = c.execute("SELECT * FROM repos ORDER BY namespace, name").fetchall()
+        return [_row_to_repo(r) for r in rows]
 
 
-def delete_repo(name: str) -> bool:
+def delete_repo(namespace: str, name: str) -> bool:
     with connect() as c:
-        cur = c.execute("DELETE FROM repos WHERE name = ?", (name,))
+        cur = c.execute(
+            "DELETE FROM repos WHERE namespace = ? AND name = ?",
+            (namespace, name),
+        )
         return cur.rowcount > 0
 
 
@@ -287,7 +297,7 @@ def search_repos(
     if metric_name:
         sql += " AND c.best_metric_name = ?"
         args.append(metric_name)
-    sql += " ORDER BY r.name LIMIT ?"
+    sql += " ORDER BY r.namespace, r.name LIMIT ?"
     args.append(limit)
 
     with connect() as c:
@@ -295,10 +305,7 @@ def search_repos(
 
     out: list[tuple[Repo, RepoCard | None]] = []
     for r in rows:
-        repo = Repo(
-            id=r["id"], name=r["name"], owner_id=r["owner_id"],
-            is_private=bool(r["is_private"]), created_at=r["created_at"],
-        )
+        repo = _row_to_repo(r)
         card = None
         if r["c_repo_id"] is not None:
             card = RepoCard(

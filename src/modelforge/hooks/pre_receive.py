@@ -84,9 +84,9 @@ def _extract_best_metric(model_index: list | None) -> tuple[str | None, float | 
     return name, val
 
 
-def _persist_card(repo_name: str, sha: str, metadata: dict) -> None:
+def _persist_card(namespace: str, name: str, sha: str, metadata: dict) -> None:
     """把 frontmatter 关键字段写入 SQLite。"""
-    repo = db.get_repo(repo_name)
+    repo = db.get_repo(namespace, name)
     if not repo:
         # 仓库未在 DB 注册（比如裸 git init 出来的）→ 跳过
         return
@@ -113,8 +113,10 @@ def main() -> int:
         print("modelforge: validation skipped (MODELFORGE_SKIP_VALIDATION=1)", file=sys.stderr)
         return 0
 
+    # repo_dir = {repos_dir}/{namespace}/{name}.git
     repo_dir = Path.cwd()
-    repo_name = repo_dir.name.removesuffix(".git")
+    name = repo_dir.name.removesuffix(".git")
+    namespace = repo_dir.parent.name
     all_errors: list[str] = []
     head_metadata: dict | None = None
     head_sha: str | None = None
@@ -150,7 +152,7 @@ def main() -> int:
     # 校验通过 → 入库（失败不阻断 push，只打 warning）
     if head_metadata and head_sha:
         try:
-            _persist_card(repo_name, head_sha, head_metadata)
+            _persist_card(namespace, name, head_sha, head_metadata)
         except Exception as e:
             print(f"modelforge: warning, failed to index card: {e}", file=sys.stderr)
 

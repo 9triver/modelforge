@@ -39,7 +39,9 @@ LFS_SIZE_THRESHOLD = 10 * 1024 * 1024  # 10 MB
 
 @dataclass
 class RepoInfo:
+    namespace: str
     name: str
+    full_name: str
     owner: str
     is_private: bool
     created_at: str
@@ -48,7 +50,9 @@ class RepoInfo:
 
 @dataclass
 class SearchResult:
+    namespace: str
     name: str
+    full_name: str
     owner: str
     library_name: str | None
     pipeline_tag: str | None
@@ -63,6 +67,18 @@ class SearchResult:
 
 class ModelHubError(Exception):
     """所有 SDK 错误的基类。"""
+
+
+def _split_repo(repo: str) -> tuple[str, str]:
+    """把 'namespace/name' 拆分。"""
+    if "/" not in repo:
+        raise ModelHubError(
+            f"repo 必须是 'namespace/name' 格式，当前: {repo!r}"
+        )
+    parts = repo.split("/", 1)
+    if not parts[0] or not parts[1] or "/" in parts[1]:
+        raise ModelHubError(f"无效的 repo 格式: {repo!r}")
+    return parts[0], parts[1]
 
 
 class ModelHub:
@@ -97,13 +113,13 @@ class ModelHub:
             return {"Authorization": f"Bearer {self.token}"}
         return {}
 
-    def _authenticated_git_url(self, repo_name: str) -> str:
-        """构造带认证信息的 Git URL（用于传给 git 子进程）。"""
+    def _authenticated_git_url(self, repo: str) -> str:
+        """构造带认证信息的 Git URL。repo 格式：'namespace/name'。"""
         if not self.token:
-            return f"{self.endpoint}/{repo_name}.git"
+            return f"{self.endpoint}/{repo}.git"
         parsed = urlparse(self.endpoint)
         netloc = f"{self.username}:{self.token}@{parsed.netloc}"
-        return urlunparse((parsed.scheme, netloc, parsed.path, "", "", "")) + f"/{repo_name}.git"
+        return urlunparse((parsed.scheme, netloc, parsed.path, "", "", "")) + f"/{repo}.git"
 
     @staticmethod
     def _run_git(args: list[str], cwd: Path | None = None, env: dict | None = None) -> str:
@@ -129,9 +145,10 @@ class ModelHub:
 
     # ---------- 仓库自动创建 ----------
 
-    def _ensure_repo_exists(self, repo_name: str) -> None:
-        """如果仓库不存在则尝试创建。"""
-        url = f"{self.endpoint}/api/v1/repos/{repo_name}"
+    def _ensure_repo_exists(self, repo: str) -> None:
+        """如果仓库不存在则尝试创建。repo 格式：'namespace/name'。"""
+        namespace, name = _split_repo(repo)
+        url = f"{self.endpoint}/api/v1/repos/{namespace}/{name}"
         try:
             with httpx.Client(trust_env=False, timeout=10.0) as c:
                 resp = c.get(url, headers=self._auth_headers())
@@ -146,16 +163,16 @@ class ModelHub:
             with httpx.Client(trust_env=False, timeout=10.0) as c:
                 resp = c.post(
                     create_url,
-                    json={"name": repo_name, "is_private": False},
+                    json={"namespace": namespace, "name": name, "is_private": False},
                     headers=self._auth_headers(),
                 )
             if resp.status_code in (200, 201):
-                self._log(f"📦 Created repo '{repo_name}'")
+                self._log(f"📦 Created repo '{repo}'")
                 return
             if resp.status_code == 409:
-                return  # 已存在
+                return
             raise ModelHubError(
-                f"创建仓库 '{repo_name}' 失败 (HTTP {resp.status_code}): {resp.text}"
+                f"创建仓库 '{repo}' 失败 (HTTP {resp.status_code}): {resp.text}"
             )
         except httpx.HTTPError as e:
             raise ModelHubError(f"创建仓库请求失败：{e}") from e
@@ -217,7 +234,9 @@ class ModelHub:
 
         return [
             SearchResult(
+                namespace=item["namespace"],
                 name=item["name"],
+                full_name=item["full_name"],
                 owner=item["owner"],
                 library_name=item.get("library_name"),
                 pipeline_tag=item.get("pipeline_tag"),
@@ -236,31 +255,31 @@ class ModelHub:
 
     def snapshot_download(
         self,
-        repo_name: str,
+        repo: str,
         revision: str = "main",
         local_dir: Path | None = None,
     ) -> Path:
         """下载整个仓库到本地目录（含 LFS 物件）。
 
-        缓存位置：`{cache_dir}/snapshots/{repo_name}/{revision_resolved}/`
+        缓存位置：`{cache_dir}/snapshots/{namespace}/{name}/{revision}/`
         如果已缓存相同 revision 的内容，直接返回缓存路径；不强制重新下载。
 
         Args:
-            repo_name: 仓库名，如 "苏州"
+            repo: 仓库名 'namespace/name'，如 "amazon/chronos-bolt-tiny"
             revision: 分支名/tag/commit SHA，默认 "main"
             local_dir: 强制下载到指定目录（不使用缓存）
 
         Returns:
             指向本地目录的 Path
         """
-        target_dir = local_dir or (self.cache_dir / "snapshots" / repo_name / revision)
+        namespace, name = _split_repo(repo)
+        target_dir = local_dir or (self.cache_dir / "snapshots" / namespace / name / revision)
 
-        # 已存在且有内容 → 直接用缓存
         if target_dir.is_dir() and any(target_dir.iterdir()):
             return target_dir
 
         target_dir.parent.mkdir(parents=True, exist_ok=True)
-        git_url = self._authenticated_git_url(repo_name)
+        git_url = self._authenticated_git_url(repo)
 
         # Clone
         self._run_git(["clone", "--quiet", git_url, str(target_dir)])
@@ -315,7 +334,7 @@ class ModelHub:
 
     def upload_folder(
         self,
-        repo_name: str,
+        repo: str,
         folder_path: str | Path,
         commit_message: str,
         branch: str = "main",
@@ -327,7 +346,7 @@ class ModelHub:
         自动检测大文件并配置 LFS 追踪。如果源目录已有 .gitattributes 则直接复用。
 
         Args:
-            repo_name: 目标仓库名
+            repo: 目标仓库名 'namespace/name'
             folder_path: 本地源目录
             commit_message: commit 信息
             branch: 目标分支，默认 main
@@ -338,6 +357,7 @@ class ModelHub:
             新 commit 的 SHA
         """
         log = self._log if verbose else lambda _: None
+        namespace, name = _split_repo(repo)
         folder_path = Path(folder_path).resolve()
         if not folder_path.is_dir():
             raise ModelHubError(f"folder_path 不是目录：{folder_path}")
@@ -357,11 +377,14 @@ class ModelHub:
             raise ModelHubError(f"本地 Model Card 校验失败：\n{e}") from e
         log("✓ Model Card 校验通过")
 
-        git_url = self._authenticated_git_url(repo_name)
+        # 自动创建仓库（如已存在则跳过）
+        self._ensure_repo_exists(repo)
+
+        git_url = self._authenticated_git_url(repo)
 
         with tempfile.TemporaryDirectory(prefix="modelforge-upload-") as tmp:
-            workdir = Path(tmp) / repo_name
-            log(f"⬇ Cloning {repo_name}...")
+            workdir = Path(tmp) / name  # 用 name（非 namespace/name）避免嵌套子目录
+            log(f"⬇ Cloning {repo}...")
             self._run_git(["clone", "--quiet", git_url, str(workdir)])
 
             # LFS 初始化
@@ -432,7 +455,7 @@ class ModelHub:
 
             self._run_git(["commit", "-m", commit_message], cwd=workdir, env=env)
 
-            log(f"⬆ Pushing to {repo_name} ({branch})...")
+            log(f"⬆ Pushing to {repo} ({branch})...")
             self._run_git(["push", "origin", branch], cwd=workdir)
 
             if tag:
@@ -451,22 +474,20 @@ class ModelHub:
     def mirror_from_hf(
         self,
         hf_repo_id: str,
-        repo_name: str | None = None,
+        repo: str | None = None,
         revision: str = "main",
         commit_message: str | None = None,
         tag: str | None = None,
     ) -> str:
         """从 Hugging Face Hub 下载模型并推送到 ModelForge。
 
-        在子进程中调用 huggingface_hub.snapshot_download，干净隔离环境变量
-        （HF_ENDPOINT 必须在 import huggingface_hub 之前设置才生效）。
-
+        在子进程中调用 huggingface_hub.snapshot_download，干净隔离环境变量。
         默认走 self.hf_endpoint（hf-mirror.com），不使用代理。
         可选：pip install hf_transfer  # 启用后多线程下载
 
         Args:
             hf_repo_id: HF 仓库 ID，如 "amazon/chronos-bolt-tiny"
-            repo_name: ModelForge 仓库名（默认取 HF repo 的 model name 部分）
+            repo: ModelForge 仓库名 'namespace/name'（默认 = hf_repo_id 原貌）
             revision: HF 上的 revision
             commit_message: commit 信息（默认自动生成）
             tag: 可选 tag
@@ -474,11 +495,12 @@ class ModelHub:
         Returns:
             新 commit 的 SHA
         """
-        if repo_name is None:
-            repo_name = hf_repo_id.split("/")[-1]
+        if repo is None:
+            repo = hf_repo_id  # 默认保留原 HF 的 namespace/name 命名
+        namespace, name = _split_repo(repo)
 
         tmp_root = Path(tempfile.mkdtemp(prefix="modelforge-hf-"))
-        local_dir = tmp_root / repo_name
+        local_dir = tmp_root / name
 
         # 干净环境：只保留 PATH/HOME/HF_ENDPOINT/HF_HUB_ENABLE_HF_TRANSFER
         env = {
@@ -501,10 +523,10 @@ class ModelHub:
         except subprocess.CalledProcessError as e:
             raise ModelHubError(f"HF 下载失败（exit {e.returncode}）") from e
 
-        self._log(f"⬆ Pushing to ModelForge as '{repo_name}'...")
-        self._ensure_repo_exists(repo_name)
+        self._log(f"⬆ Pushing to ModelForge as '{repo}'...")
+        self._ensure_repo_exists(repo)
         msg = commit_message or f"Mirror from HF: {hf_repo_id} ({revision})"
         try:
-            return self.upload_folder(repo_name, local_dir, msg, tag=tag)
+            return self.upload_folder(repo, local_dir, msg, tag=tag)
         finally:
             shutil.rmtree(tmp_root, ignore_errors=True)

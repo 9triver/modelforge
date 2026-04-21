@@ -60,9 +60,11 @@
         {% else %}
         <div class="space-y-2">
             {% for r in repos %}
-            <a href="/{{ r.name }}" class="block bg-white rounded-lg border border-gray-200 hover:border-amber-400 hover:shadow-sm transition px-4 py-3">
+            <a href="/{{ r.full_name }}" class="block bg-white rounded-lg border border-gray-200 hover:border-amber-400 hover:shadow-sm transition px-4 py-3">
                 <div class="flex items-center gap-3">
-                    <div class="font-semibold text-blue-700">{{ r.name }}</div>
+                    <div class="font-semibold text-blue-700">
+                        <span class="text-gray-500 font-normal">{{ r.namespace }}/</span>{{ r.name }}
+                    </div>
                     <span class="text-xs text-gray-400">{{ r.owner }}</span>
                     {% if r.metadata and r.metadata.pipeline_tag %}
                     <span class="bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded text-xs border border-blue-200">{{ r.metadata.pipeline_tag }}</span>

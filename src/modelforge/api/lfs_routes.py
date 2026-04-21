@@ -62,31 +62,31 @@ class LfsBatchResponse(BaseModel):
 # ---------- Batch 端点 ----------
 
 @router.post(
-    "/{repo_name}.git/info/lfs/objects/batch",
+    "/{namespace}/{name}.git/info/lfs/objects/batch",
     response_model=LfsBatchResponse,
 )
 async def lfs_batch(
-    repo_name: str,
+    namespace: str,
+    name: str,
     req: LfsBatchRequest,
     request: Request,
     authorization: str | None = Header(None),
 ):
     """LFS Batch API：客户端报告要传/取哪些 OID，服务端返回 URL。"""
-    repo = db.get_repo(repo_name)
+    repo = db.get_repo(namespace, name)
     if not repo:
-        raise HTTPException(404, f"Repository '{repo_name}' not found")
+        raise HTTPException(404, f"Repository '{namespace}/{name}' not found")
 
     if req.operation == "upload":
         authenticate(authorization)
 
-    # 构造 base URL（从请求推断）
     base = str(request.base_url).rstrip("/")
+    full = f"{namespace}/{name}"
 
     objects: list[LfsBatchObjectResponse] = []
     for obj in req.objects:
         if req.operation == "upload":
             if lfs_store.exists(obj.oid) and lfs_store.size(obj.oid) == obj.size:
-                # 已存在且大小一致，不需要重传
                 objects.append(LfsBatchObjectResponse(oid=obj.oid, size=obj.size))
             else:
                 objects.append(LfsBatchObjectResponse(
@@ -94,11 +94,11 @@ async def lfs_batch(
                     size=obj.size,
                     actions={
                         "upload": LfsAction(
-                            href=f"{base}/{repo_name}.git/lfs/objects/{obj.oid}",
+                            href=f"{base}/{full}.git/lfs/objects/{obj.oid}",
                             header={"Authorization": authorization or ""},
                         ),
                         "verify": LfsAction(
-                            href=f"{base}/{repo_name}.git/lfs/verify",
+                            href=f"{base}/{full}.git/lfs/verify",
                             header={"Authorization": authorization or ""},
                         ),
                     },
@@ -110,7 +110,7 @@ async def lfs_batch(
                     size=obj.size,
                     actions={
                         "download": LfsAction(
-                            href=f"{base}/{repo_name}.git/lfs/objects/{obj.oid}",
+                            href=f"{base}/{full}.git/lfs/objects/{obj.oid}",
                         ),
                     },
                 ))
@@ -126,9 +126,10 @@ async def lfs_batch(
 
 # ---------- 上传端点 ----------
 
-@router.put("/{repo_name}.git/lfs/objects/{oid}")
+@router.put("/{namespace}/{name}.git/lfs/objects/{oid}")
 async def lfs_upload(
-    repo_name: str,
+    namespace: str,
+    name: str,
     oid: str,
     request: Request,
     authorization: str | None = Header(None),
@@ -155,8 +156,8 @@ async def lfs_upload(
 
 # ---------- 下载端点 ----------
 
-@router.get("/{repo_name}.git/lfs/objects/{oid}")
-async def lfs_download(repo_name: str, oid: str):
+@router.get("/{namespace}/{name}.git/lfs/objects/{oid}")
+async def lfs_download(namespace: str, name: str, oid: str):
     """流式返回 LFS 物件内容。"""
     chunks = lfs_store.read_chunks(oid)
     if chunks is None:
@@ -172,9 +173,10 @@ async def lfs_download(repo_name: str, oid: str):
 
 # ---------- Verify 端点 ----------
 
-@router.post("/{repo_name}.git/lfs/verify")
+@router.post("/{namespace}/{name}.git/lfs/verify")
 async def lfs_verify(
-    repo_name: str,
+    namespace: str,
+    name: str,
     request: Request,
     authorization: str | None = Header(None),
 ):

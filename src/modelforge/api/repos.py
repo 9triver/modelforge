@@ -1,10 +1,12 @@
 """仓库管理 REST API。
 
-- POST /api/v1/repos    创建仓库
-- GET  /api/v1/repos    列表
-- GET  /api/v1/repos/search  按 Model Card 字段搜索
-- GET  /api/v1/repos/{name}  详情
-- DELETE /api/v1/repos/{name}  删除（仅 owner）
+- POST   /api/v1/repos                  创建仓库
+- GET    /api/v1/repos                  列表
+- GET    /api/v1/repos/search           按 Model Card 字段搜索
+- GET    /api/v1/repos/{namespace}/{name}    详情
+- DELETE /api/v1/repos/{namespace}/{name}    删除（仅 owner）
+
+仓库名采用 `{namespace}/{name}` 两段格式（类似 Hugging Face）。
 """
 from __future__ import annotations
 
@@ -20,12 +22,15 @@ router = APIRouter(prefix="/api/v1/repos", tags=["repos"])
 
 
 class CreateRepoRequest(BaseModel):
+    namespace: str = Field(..., description="命名空间（如 amazon / jiangsu）")
     name: str = Field(..., description="仓库名，符合 [A-Za-z0-9][A-Za-z0-9._-]{0,63}")
     is_private: bool = False
 
 
 class RepoResponse(BaseModel):
+    namespace: str
     name: str
+    full_name: str  # "{namespace}/{name}"
     owner: str
     is_private: bool
     created_at: str
@@ -33,7 +38,9 @@ class RepoResponse(BaseModel):
 
 
 class RepoSearchResult(BaseModel):
+    namespace: str
     name: str
+    full_name: str
     owner: str
     library_name: str | None = None
     pipeline_tag: str | None = None
@@ -48,25 +55,28 @@ class RepoSearchResult(BaseModel):
 
 def _to_response(repo: db.Repo, base_url: str = "") -> RepoResponse:
     owner = db.get_user_by_id(repo.owner_id)
+    full = repo.full_name
     return RepoResponse(
+        namespace=repo.namespace,
         name=repo.name,
+        full_name=full,
         owner=owner.name if owner else "<unknown>",
         is_private=repo.is_private,
         created_at=repo.created_at,
-        git_url=f"{base_url}/{repo.name}.git" if base_url else f"/{repo.name}.git",
+        git_url=f"{base_url}/{full}.git" if base_url else f"/{full}.git",
     )
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=RepoResponse)
 def create_repo(req: CreateRepoRequest, user: db.User = Depends(require_user)):
-    if db.get_repo(req.name):
-        raise HTTPException(409, f"Repository '{req.name}' already exists")
+    if db.get_repo(req.namespace, req.name):
+        raise HTTPException(409, f"Repository '{req.namespace}/{req.name}' already exists")
     try:
-        storage.validate_repo_name(req.name)
-        storage.create_bare_repo(req.name)
+        storage.validate_repo_name(req.namespace, req.name)
+        storage.create_bare_repo(req.namespace, req.name)
     except storage.RepoStorageError as e:
         raise HTTPException(400, str(e))
-    repo = db.create_repo(req.name, owner_id=user.id, is_private=req.is_private)
+    repo = db.create_repo(req.namespace, req.name, owner_id=user.id, is_private=req.is_private)
     return _to_response(repo)
 
 
@@ -108,7 +118,9 @@ def search_repos(
             except json.JSONDecodeError:
                 tags = []
         out.append(RepoSearchResult(
+            namespace=repo.namespace,
             name=repo.name,
+            full_name=repo.full_name,
             owner=owner.name if owner else "<unknown>",
             library_name=card.library_name if card else None,
             pipeline_tag=card.pipeline_tag if card else None,
@@ -123,20 +135,20 @@ def search_repos(
     return out
 
 
-@router.get("/{name}", response_model=RepoResponse)
-def get_repo(name: str):
-    repo = db.get_repo(name)
+@router.get("/{namespace}/{name}", response_model=RepoResponse)
+def get_repo(namespace: str, name: str):
+    repo = db.get_repo(namespace, name)
     if not repo:
-        raise HTTPException(404, f"Repository '{name}' not found")
+        raise HTTPException(404, f"Repository '{namespace}/{name}' not found")
     return _to_response(repo)
 
 
-@router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_repo(name: str, user: db.User = Depends(require_user)):
-    repo = db.get_repo(name)
+@router.delete("/{namespace}/{name}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_repo(namespace: str, name: str, user: db.User = Depends(require_user)):
+    repo = db.get_repo(namespace, name)
     if not repo:
-        raise HTTPException(404, f"Repository '{name}' not found")
+        raise HTTPException(404, f"Repository '{namespace}/{name}' not found")
     if repo.owner_id != user.id:
         raise HTTPException(403, "Only the owner can delete this repository")
-    db.delete_repo(name)
-    storage.delete_bare_repo(name)
+    db.delete_repo(namespace, name)
+    storage.delete_bare_repo(namespace, name)

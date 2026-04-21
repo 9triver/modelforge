@@ -1,14 +1,18 @@
 {% extends "base.html" %}
-{% block title %}{{ repo.name }} — ModelForge{% endblock %}
+{% block title %}{{ repo.full_name }} — ModelForge{% endblock %}
 {% block content %}
 
 <!-- 顶部：标题 + 面包屑 -->
 <div class="mb-4 pb-4 border-b border-gray-200">
     <div class="text-sm text-gray-500 mb-1">
-        <a href="/" class="hover:underline text-gray-600">Models</a> / <span class="text-gray-800">{{ repo.name }}</span>
+        <a href="/" class="hover:underline text-gray-600">Models</a> /
+        <a href="/?namespace={{ repo.namespace }}" class="hover:underline text-gray-600">{{ repo.namespace }}</a> /
+        <span class="text-gray-800">{{ repo.name }}</span>
     </div>
     <div class="flex items-center gap-3 mb-2 flex-wrap">
-        <h1 class="text-2xl font-bold text-blue-700">{{ repo.name }}</h1>
+        <h1 class="text-2xl font-bold text-blue-700">
+            <span class="text-gray-500 font-normal">{{ repo.namespace }}/</span>{{ repo.name }}
+        </h1>
         <span class="text-sm text-gray-500">{{ repo.owner }}</span>
         {% if metadata and metadata.pipeline_tag %}
         <span class="bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200 text-xs">{{ metadata.pipeline_tag }}</span>
@@ -31,11 +35,11 @@
 
 <!-- Tab 切换 -->
 <div class="flex border-b border-gray-200 mb-4 text-sm">
-    <a href="/{{ repo.name }}?tab=card"
+    <a href="/{{ repo.full_name }}?tab=card"
        class="px-4 py-2 border-b-2 {% if tab == 'card' %}border-amber-500 text-amber-700 font-semibold{% else %}border-transparent text-gray-500 hover:text-gray-800{% endif %}">
         📋 Model Card
     </a>
-    <a href="/{{ repo.name }}?tab=files"
+    <a href="/{{ repo.full_name }}?tab=files"
        class="px-4 py-2 border-b-2 {% if tab == 'files' %}border-amber-500 text-amber-700 font-semibold{% else %}border-transparent text-gray-500 hover:text-gray-800{% endif %}">
         📁 Files {% if files %}<span class="text-xs text-gray-400 ml-1">({{ files|length }})</span>{% endif %}
     </a>
@@ -85,7 +89,7 @@
             <!-- Branch / Tag 切换器 -->
             <div class="flex items-center gap-3 mb-4">
                 <div class="relative">
-                    <select onchange="window.location.href='/{{ repo.name }}?tab=files&revision='+this.value"
+                    <select onchange="window.location.href='/{{ repo.full_name }}?tab=files&revision='+this.value"
                             class="appearance-none bg-white border border-gray-300 rounded-lg pl-3 pr-8 py-1.5 text-sm font-mono cursor-pointer hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-amber-300">
                         {% for b in refs.branches %}
                         <option value="{{ b }}" {% if revision == b %}selected{% endif %}>🔀 {{ b }}</option>
@@ -145,7 +149,7 @@
             <div class="bg-gray-900 text-gray-100 rounded p-2 font-mono text-xs">
                 <div>from modelforge.client import ModelHub</div>
                 <div class="text-gray-400">hub = ModelHub("...")</div>
-                <div>hub.snapshot_download(<span class="text-amber-300">"{{ repo.name }}"</span>)</div>
+                <div>hub.snapshot_download(<span class="text-amber-300">"{{ repo.full_name }}"</span>)</div>
             </div>
         </div>
 

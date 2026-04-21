@@ -20,9 +20,9 @@ class FileEntry:
     mode: str          # Git 模式（100644/100755/120000/...）
 
 
-def _git(repo_name: str, *args: str) -> str:
+def _git(namespace: str, name: str, *args: str) -> str:
     """在裸仓库上运行 git 命令，返回 stdout（字符串）。"""
-    path = storage.repo_path(repo_name)
+    path = storage.repo_path(namespace, name)
     result = subprocess.run(
         ["git", f"--git-dir={path}", *args],
         capture_output=True, text=True,
@@ -34,22 +34,22 @@ def _git(repo_name: str, *args: str) -> str:
     return result.stdout
 
 
-def read_file(repo_name: str, revision: str, filepath: str) -> str | None:
+def read_file(namespace: str, name: str, revision: str, filepath: str) -> str | None:
     """读取仓库中某 revision 下的文本文件。不存在返回 None。"""
     try:
-        return _git(repo_name, "show", f"{revision}:{filepath}")
+        return _git(namespace, name, "show", f"{revision}:{filepath}")
     except FileNotFoundError:
         return None
 
 
-def list_files(repo_name: str, revision: str) -> list[FileEntry]:
+def list_files(namespace: str, name: str, revision: str) -> list[FileEntry]:
     """列出仓库某 revision 下所有文件（递归）。
 
     识别 LFS 指针（尺寸 <1KB 且以 'version https://git-lfs.github.com' 开头的 blob）。
     返回 [FileEntry, ...]。
     """
     try:
-        output = _git(repo_name, "ls-tree", "-r", "-l", revision)
+        output = _git(namespace, name, "ls-tree", "-r", "-l", revision)
     except FileNotFoundError:
         return []
 
@@ -68,10 +68,9 @@ def list_files(repo_name: str, revision: str) -> list[FileEntry]:
         # 小文件可能是 LFS 指针；检查内容
         if 0 < size < 1024:
             try:
-                content = _git(repo_name, "show", f"{revision}:{path}")
+                content = _git(namespace, name, "show", f"{revision}:{path}")
                 if content.startswith("version https://git-lfs.github.com"):
                     is_lfs = True
-                    # 从指针中解析真实大小
                     for ln in content.split("\n"):
                         if ln.startswith("size "):
                             try:
@@ -85,21 +84,21 @@ def list_files(repo_name: str, revision: str) -> list[FileEntry]:
     return entries
 
 
-def has_any_commits(repo_name: str) -> bool:
+def has_any_commits(namespace: str, name: str) -> bool:
     """仓库是否有任何 commit（判断是不是空仓库）。"""
     try:
-        _git(repo_name, "rev-parse", "HEAD")
+        _git(namespace, name, "rev-parse", "HEAD")
         return True
     except FileNotFoundError:
         return False
 
 
-def list_refs(repo_name: str) -> dict[str, list[str]]:
+def list_refs(namespace: str, name: str) -> dict[str, list[str]]:
     """列出仓库的分支和 tag。返回 {"branches": [...], "tags": [...]}。"""
     branches: list[str] = []
     tags: list[str] = []
     try:
-        output = _git(repo_name, "for-each-ref", "--format=%(refname)", "refs/heads/", "refs/tags/")
+        output = _git(namespace, name, "for-each-ref", "--format=%(refname)", "refs/heads/", "refs/tags/")
     except FileNotFoundError:
         return {"branches": branches, "tags": tags}
     for line in output.splitlines():
