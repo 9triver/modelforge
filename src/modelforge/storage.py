@@ -47,7 +47,8 @@ def create_bare_repo(namespace: str, name: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     settings = get_settings()
     subprocess.run(
-        [settings.git_path, "init", "--bare", "--quiet", str(path)],
+        [settings.git_path, "init", "--bare", "--quiet",
+         "--initial-branch=main", str(path)],
         check=True,
     )
     subprocess.run(
