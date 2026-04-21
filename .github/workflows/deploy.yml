@@ -1,0 +1,52 @@
+name: Deploy
+
+on:
+  push:
+    branches: [v2/server]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, Linux, modelforge]
+    timeout-minutes: 15
+
+    env:
+      REPO_DIR: /home/chun/modelforge
+
+    steps:
+      - name: Sync repo
+        run: |
+          set -e
+          cd "$REPO_DIR"
+          git fetch --prune origin
+          git reset --hard "$GITHUB_SHA"
+
+      - name: Build frontend
+        run: |
+          cd "$REPO_DIR/web"
+          corepack enable pnpm || true
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Install Python package
+        run: |
+          cd "$REPO_DIR"
+          python3 -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -e .
+
+      - name: Restart service
+        run: sudo /bin/systemctl restart modelforge.service
+
+      - name: Health check
+        run: |
+          for i in 1 2 3 4 5; do
+            if curl -sf http://127.0.0.1:8000/healthz; then
+              echo "OK"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "health check failed"
+          sudo /bin/journalctl -u modelforge.service -n 50 --no-pager
+          exit 1

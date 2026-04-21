@@ -1,0 +1,22 @@
+[Unit]
+Description=ModelForge Git+LFS Model Hub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chun
+Group=chun
+WorkingDirectory=/home/chun/modelforge
+Environment=MODELFORGE_DATA_DIR=/home/chun/modelforge-data
+Environment=MODELFORGE_HOST=0.0.0.0
+Environment=MODELFORGE_PORT=8000
+ExecStart=/home/chun/modelforge/.venv/bin/modelforge serve
+Restart=on-failure
+RestartSec=3
+
+# 放宽一些以便 git/LFS 读写大文件
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
