@@ -59,3 +59,25 @@ export interface Facets {
   licenses: string[];
   tags: string[];
 }
+
+export interface AggregateMetrics {
+  count: number;
+  metric: string | null;
+  median: number | null;
+  p25: number | null;
+  p75: number | null;
+}
+
+export interface Evaluation {
+  id: number;
+  repo: string;
+  revision: string;
+  task: string;
+  status: 'queued' | 'running' | 'ok' | 'error';
+  metrics: Record<string, number | null> | null;
+  primary_metric: string | null;
+  primary_value: number | null;
+  duration_ms: number | null;
+  error: string | null;
+  created_at: string;
+}

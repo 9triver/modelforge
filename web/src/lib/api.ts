@@ -1,4 +1,11 @@
-import type { Facets, Preview, RepoSummary, SearchResult } from './types';
+import type {
+  AggregateMetrics,
+  Evaluation,
+  Facets,
+  Preview,
+  RepoSummary,
+  SearchResult,
+} from './types';
 
 async function getJSON<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -31,4 +38,31 @@ export function getFacets(): Promise<Facets> {
 
 export function getPreview(namespace: string, name: string, revision = 'main'): Promise<Preview> {
   return getJSON(`/api/v1/repos/${namespace}/${name}/preview?revision=${encodeURIComponent(revision)}`);
+}
+
+export function getRepoMetrics(namespace: string, name: string): Promise<AggregateMetrics> {
+  return getJSON(`/api/v1/repos/${namespace}/${name}/metrics`);
+}
+
+export async function postEvaluation(
+  namespace: string,
+  name: string,
+  dataset: File,
+  revision = 'main',
+): Promise<{ evaluation_id: number; status: string }> {
+  const fd = new FormData();
+  fd.append('dataset', dataset);
+  const res = await fetch(
+    `/api/v1/repos/${namespace}/${name}/evaluate?revision=${encodeURIComponent(revision)}`,
+    { method: 'POST', body: fd },
+  );
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`${res.status} ${res.statusText}: ${body}`);
+  }
+  return res.json();
+}
+
+export function getEvaluation(id: number): Promise<Evaluation> {
+  return getJSON(`/api/v1/evaluations/${id}`);
 }

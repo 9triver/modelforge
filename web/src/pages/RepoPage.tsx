@@ -1,19 +1,30 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { getPreview } from '../lib/api';
-import type { Preview } from '../lib/types';
-import ModelIndexTable from '../components/ModelIndexTable';
+import { getPreview, getRepoMetrics } from '../lib/api';
+import type { AggregateMetrics, Preview } from '../lib/types';
+import EvaluateTab from '../components/EvaluateTab';
 import FileList from '../components/FileList';
+import ModelIndexTable from '../components/ModelIndexTable';
+import PerformanceBadge from '../components/PerformanceBadge';
+
+type Tab = 'card' | 'files' | 'evaluate';
 
 export default function RepoPage() {
   const { namespace = '', name = '' } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
-  const tab = searchParams.get('tab') === 'files' ? 'files' : 'card';
+  const tabParam = searchParams.get('tab');
+  const tab: Tab =
+    tabParam === 'files' ? 'files' : tabParam === 'evaluate' ? 'evaluate' : 'card';
   const revision = searchParams.get('revision') || 'main';
 
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [agg, setAgg] = useState<AggregateMetrics | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const loadAgg = useCallback(() => {
+    getRepoMetrics(namespace, name).then(setAgg).catch(() => setAgg(null));
+  }, [namespace, name]);
 
   useEffect(() => {
     setLoading(true);
@@ -24,12 +35,17 @@ export default function RepoPage() {
       .finally(() => setLoading(false));
   }, [namespace, name, revision]);
 
+  useEffect(() => {
+    loadAgg();
+  }, [loadAgg]);
+
   if (loading) return <div className="text-gray-500">加载中...</div>;
   if (error) return <div className="bg-red-50 text-red-700 p-4 rounded">{error}</div>;
   if (!preview) return null;
 
   const meta = preview.metadata || {};
   const gitUrl = `${window.location.protocol}//${window.location.host}/${preview.full_name}.git`;
+  const setTab = (t: Tab) => setSearchParams({ tab: t, revision });
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-6">
@@ -45,23 +61,28 @@ export default function RepoPage() {
         </div>
 
         <div className="border-b border-gray-200 mb-4 flex gap-1">
-          {(['card', 'files'] as const).map((t) => (
+          {(['card', 'files', 'evaluate'] as const).map((t) => (
             <button
               key={t}
-              onClick={() => setSearchParams({ tab: t, revision })}
+              onClick={() => setTab(t)}
               className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
                 tab === t
                   ? 'border-blue-600 text-blue-600'
                   : 'border-transparent text-gray-600 hover:text-gray-900'
               }`}
             >
-              {t === 'card' ? 'Model Card' : `Files (${preview.files.length})`}
+              {t === 'card'
+                ? 'Model Card'
+                : t === 'files'
+                ? `Files (${preview.files.length})`
+                : 'Evaluate'}
             </button>
           ))}
         </div>
 
         {tab === 'card' && (
           <div>
+            {agg && <PerformanceBadge agg={agg} />}
             {preview.body_error && (
               <div className="bg-yellow-50 text-yellow-800 p-3 rounded mb-4 whitespace-pre-wrap text-sm">
                 {preview.body_error}
@@ -69,7 +90,7 @@ export default function RepoPage() {
             )}
             {preview.model_index.length > 0 && (
               <>
-                <h2 className="text-lg font-semibold mt-2 mb-2">Performance</h2>
+                <h2 className="text-lg font-semibold mt-2 mb-2">Reported metrics (model_card)</h2>
                 <ModelIndexTable rows={preview.model_index} />
               </>
             )}
@@ -83,6 +104,19 @@ export default function RepoPage() {
         )}
 
         {tab === 'files' && <FileList files={preview.files} />}
+
+        {tab === 'evaluate' && (
+          <EvaluateTab
+            namespace={namespace}
+            name={name}
+            revision={revision}
+            task={meta.pipeline_tag || null}
+            onDone={() => {
+              loadAgg();
+              setTab('card');
+            }}
+          />
+        )}
       </div>
 
       <aside className="space-y-4 text-sm">
