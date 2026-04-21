@@ -12,6 +12,7 @@ jobs:
 
     env:
       REPO_DIR: /home/chun/modelforge
+      XDG_RUNTIME_DIR: /run/user/1000
 
     steps:
       - name: Sync repo
