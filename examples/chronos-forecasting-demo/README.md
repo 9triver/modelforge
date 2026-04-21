@@ -7,13 +7,16 @@
 ```bash
 ssh chun@192.168.30.134
 cd /home/chun/modelforge
-.venv/bin/pip install chronos-forecasting torch --index-url https://download.pytorch.org/whl/cpu
-# 部署机没 GPU 就用 CPU wheel，大约 200MB；有 GPU 用默认 index
-sudo systemctl --user restart modelforge.service
+.venv/bin/pip install chronos-forecasting torch
+.venv/bin/pip install -e ".[runtime-timeseries]"
+systemctl --user restart modelforge.service
+
+# 确认 GPU 可用
+.venv/bin/python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 ```
 
-> 如果之前没装过 runtime-timeseries，顺手装一下：
-> `.venv/bin/pip install -e ".[runtime-timeseries]"`
+> 没 GPU 的机器把 torch 换成 CPU wheel：`pip install torch --index-url https://download.pytorch.org/whl/cpu`
+> handler 自动按 `torch.cuda.is_available()` 选设备。
 
 ## 1. Mac 本地：镜像模型
 
