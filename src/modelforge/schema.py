@@ -47,13 +47,12 @@ class ModelCardMetadata(BaseModel):
         description="客户端库名，如 'lightgbm'、'transformers'",
         min_length=1,
     )
-    tags: list[str] = Field(
-        ...,
-        description="至少一个标签，用于搜索和分类",
-        min_length=1,
-    )
 
     # ===== 推荐字段 =====
+    tags: list[str] = Field(
+        default_factory=list,
+        description="模型标签，用于搜索和分类（HF 推荐但非强制）",
+    )
     pipeline_tag: str | None = Field(
         None,
         description="任务类型，如 'text-classification'、'tabular-regression'",

@@ -1,11 +1,35 @@
 """FastAPI 应用工厂。"""
 from __future__ import annotations
 
-from fastapi import FastAPI
+from pathlib import Path
 
-from . import __version__, web
-from .api import git_routes, lfs_routes, repos
+from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from . import __version__
+from .api import git_routes, lfs_routes, preview, repos
 from .config import get_settings
+
+STATIC_DIR = Path(__file__).parent / "static"
+
+
+class SPAStaticFiles(StaticFiles):
+    """StaticFiles 变体：文件不存在时回退到 index.html，支持 react-router 动态路径。
+
+    Git/LFS/API 路由已提前注册，这里只处理前端页面的 404。
+    """
+
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as e:
+            if e.status_code == 404:
+                index = Path(self.directory) / "index.html"
+                if index.is_file():
+                    return FileResponse(index)
+            raise
 
 
 def create_app() -> FastAPI:
@@ -24,15 +48,28 @@ def create_app() -> FastAPI:
     def version():
         return {"version": __version__}
 
+    # API 与 Git/LFS 必须先注册（SPAStaticFiles 挂在 / 上会兜底所有路径）
     app.include_router(repos.router)
+    app.include_router(preview.router)
     app.include_router(lfs_routes.router)
-    # Git 路由：路径模板 /{repo}.git/... （.git 后缀区分于 Web 路由）
     app.include_router(git_routes.router)
-    # Web UI 路由放最后：/{repo_name} 单段路径，避开 /api、/healthz
-    app.include_router(web.router)
+
+    STATIC_DIR.mkdir(parents=True, exist_ok=True)
+    if not (STATIC_DIR / "index.html").exists():
+        # 占位：未构建前端时给个提示页
+        (STATIC_DIR / "index.html").write_text(
+            "<!doctype html><meta charset=utf-8><title>ModelForge</title>"
+            "<h1>ModelForge</h1>"
+            "<p>前端尚未构建。运行 <code>cd web && pnpm install && pnpm build</code>。</p>"
+            "<p><a href='/api/v1/repos'>API: /api/v1/repos</a> · "
+            "<a href='/docs'>Swagger: /docs</a></p>",
+            encoding="utf-8",
+        )
+    app.mount("/", SPAStaticFiles(directory=STATIC_DIR, html=True), name="ui")
 
     return app
 
 
 # 模块级 app，便于 `uvicorn modelforge.server:app`
 app = create_app()
+
