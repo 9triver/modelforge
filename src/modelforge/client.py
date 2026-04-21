@@ -511,7 +511,14 @@ class ModelHub:
         }
 
         self._log(f"⬇ Downloading {hf_repo_id} from {self.hf_endpoint}...")
+        # 子进程脚本：禁用 httpx trust_env，避免 macOS 系统级 proxy 介入
         script = (
+            "import httpx;"
+            "from huggingface_hub.utils import _http;"
+            "_factory = _http._GLOBAL_CLIENT_FACTORY;"
+            "_http._GLOBAL_CLIENT_FACTORY = lambda: httpx.Client("
+            "  event_hooks={'request': [_http.hf_request_event_hook]},"
+            "  follow_redirects=True, timeout=None, trust_env=False);"
             "from huggingface_hub import snapshot_download;"
             f"snapshot_download({hf_repo_id!r}, revision={revision!r}, local_dir={str(local_dir)!r})"
         )
