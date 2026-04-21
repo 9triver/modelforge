@@ -81,12 +81,14 @@ class ModelHub:
         token: str | None = None,
         cache_dir: Path | None = None,
         username: str = "modelforge",
+        hf_endpoint: str = "https://hf-mirror.com",
     ):
         self.endpoint = endpoint.rstrip("/")
         self.token = token or os.environ.get("MODELFORGE_TOKEN")
         self.cache_dir = Path(cache_dir or DEFAULT_CACHE_DIR)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.username = username  # HTTP Basic Auth 的 username，内容无关紧要
+        self.hf_endpoint = hf_endpoint  # HF 镜像（默认 hf-mirror.com，国内可访问）
 
     # ---------- 内部工具 ----------
 
@@ -124,6 +126,39 @@ class ModelHub:
     @staticmethod
     def _log(msg: str) -> None:
         print(f"  {msg}", file=sys.stderr, flush=True)
+
+    # ---------- 仓库自动创建 ----------
+
+    def _ensure_repo_exists(self, repo_name: str) -> None:
+        """如果仓库不存在则尝试创建。"""
+        url = f"{self.endpoint}/api/v1/repos/{repo_name}"
+        try:
+            with httpx.Client(trust_env=False, timeout=10.0) as c:
+                resp = c.get(url, headers=self._auth_headers())
+            if resp.status_code == 200:
+                return
+        except httpx.HTTPError:
+            pass
+
+        # 创建
+        create_url = f"{self.endpoint}/api/v1/repos"
+        try:
+            with httpx.Client(trust_env=False, timeout=10.0) as c:
+                resp = c.post(
+                    create_url,
+                    json={"name": repo_name, "is_private": False},
+                    headers=self._auth_headers(),
+                )
+            if resp.status_code in (200, 201):
+                self._log(f"📦 Created repo '{repo_name}'")
+                return
+            if resp.status_code == 409:
+                return  # 已存在
+            raise ModelHubError(
+                f"创建仓库 '{repo_name}' 失败 (HTTP {resp.status_code}): {resp.text}"
+            )
+        except httpx.HTTPError as e:
+            raise ModelHubError(f"创建仓库请求失败：{e}") from e
 
     # ---------- API 1: list_repos ----------
 
@@ -423,7 +458,8 @@ class ModelHub:
     ) -> str:
         """从 Hugging Face Hub 下载模型并推送到 ModelForge。
 
-        需要安装 huggingface_hub：pip install huggingface_hub
+        优先使用 hfd.sh（aria2c 多线程断点续传，hf-mirror 官方推荐）；
+        找不到 hfd.sh 时回退到 huggingface_hub.snapshot_download。
 
         Args:
             hf_repo_id: HF 仓库 ID，如 "google/timesfm-2.0-500m-pytorch"
@@ -435,27 +471,51 @@ class ModelHub:
         Returns:
             新 commit 的 SHA
         """
-        try:
-            from huggingface_hub import snapshot_download as hf_download
-        except ImportError:
-            raise ModelHubError(
-                "mirror_from_hf 需要 huggingface_hub：pip install huggingface_hub"
-            )
-
         if repo_name is None:
             repo_name = hf_repo_id.split("/")[-1]
 
-        self._log(f"⬇ Downloading {hf_repo_id} from Hugging Face...")
-        local_dir = Path(tempfile.mkdtemp(prefix="modelforge-hf-")) / repo_name
-        hf_download(
-            hf_repo_id,
-            revision=revision,
-            local_dir=str(local_dir),
-        )
+        tmp_root = Path(tempfile.mkdtemp(prefix="modelforge-hf-"))
+        local_dir = tmp_root / repo_name
+
+        hfd = shutil.which("hfd.sh") or shutil.which("hfd")
+        if hfd and shutil.which("aria2c"):
+            self._log(f"⬇ Downloading {hf_repo_id} via hfd.sh (aria2c, {self.hf_endpoint})...")
+            env = os.environ.copy()
+            # 关掉代理，hf-mirror.com 国内直连更稳
+            for k in ("http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+                env.pop(k, None)
+            env["HF_ENDPOINT"] = self.hf_endpoint
+            try:
+                subprocess.run(
+                    [hfd, hf_repo_id,
+                     "--local-dir", str(local_dir),
+                     "--revision", revision,
+                     "--tool", "aria2c", "-x", "8", "-j", "5"],
+                    env=env, check=True,
+                )
+            except subprocess.CalledProcessError as e:
+                raise ModelHubError(f"hfd.sh 下载失败（exit {e.returncode}）") from e
+        else:
+            try:
+                from huggingface_hub import snapshot_download as hf_download
+            except ImportError:
+                raise ModelHubError(
+                    "需要 hfd.sh（推荐）或 huggingface_hub：\n"
+                    "  curl -sSL https://hf-mirror.com/hfd/hfd.sh -o ~/.local/bin/hfd.sh && chmod +x ~/.local/bin/hfd.sh\n"
+                    "  或 pip install huggingface_hub"
+                )
+            os.environ["HF_ENDPOINT"] = self.hf_endpoint
+            self._log(f"⬇ Downloading {hf_repo_id} via huggingface_hub ({self.hf_endpoint})...")
+            hf_download(
+                hf_repo_id,
+                revision=revision,
+                local_dir=str(local_dir),
+            )
 
         self._log(f"⬆ Pushing to ModelForge as '{repo_name}'...")
+        self._ensure_repo_exists(repo_name)
         msg = commit_message or f"Mirror from HF: {hf_repo_id} ({revision})"
         try:
             return self.upload_folder(repo_name, local_dir, msg, tag=tag)
         finally:
-            shutil.rmtree(local_dir.parent, ignore_errors=True)
+            shutil.rmtree(tmp_root, ignore_errors=True)
