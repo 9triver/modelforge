@@ -79,6 +79,7 @@ def _run_evaluation(
     try:
         model_dir = workdir / "model"
         repo_reader.checkout_to_dir(namespace, name, revision, model_dir)
+        repo_reader.materialize_lfs(model_dir)
 
         ds_path = workdir / dataset_name
         ds_path.write_bytes(dataset_bytes)

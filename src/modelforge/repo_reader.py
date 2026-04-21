@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -123,6 +124,61 @@ def checkout_to_dir(namespace: str, name: str, revision: str, dest: Path) -> Non
         raise RuntimeError(
             f"checkout failed: git archive rc={archive_rc}, tar rc={tar_rc}"
         )
+
+
+LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/"
+
+
+def _parse_lfs_pointer(data: bytes) -> str | None:
+    """若 data 是 LFS 指针，返回 sha256 oid；否则 None。
+
+    指针格式（ASCII，<1KB）：
+        version https://git-lfs.github.com/spec/v1
+        oid sha256:abc123...
+        size 12345
+    """
+    if not data.startswith(LFS_POINTER_PREFIX):
+        return None
+    for line in data.splitlines():
+        if line.startswith(b"oid sha256:"):
+            return line[len(b"oid sha256:"):].decode().strip()
+    return None
+
+
+def materialize_lfs(checkout_dir: Path) -> int:
+    """扫描 checkout_dir，把 LFS 指针文件替换成真实物件（从 lfs_store 取）。
+
+    返回实化了多少个文件。缺失的指针（物件未上传）会抛 FileNotFoundError。
+    """
+    from . import lfs_store
+
+    replaced = 0
+    for p in checkout_dir.rglob("*"):
+        if not p.is_file():
+            continue
+        try:
+            if p.stat().st_size > 1024:
+                continue  # 指针文件必然 <1KB
+            data = p.read_bytes()
+        except OSError:
+            continue
+        oid = _parse_lfs_pointer(data)
+        if not oid:
+            continue
+        real = lfs_store.path_for_oid(oid)
+        if real is None:
+            raise FileNotFoundError(
+                f"LFS 物件缺失：{p.relative_to(checkout_dir)} (oid={oid})"
+            )
+        # 硬链接省磁盘 + 速度快；跨盘失败时退回 copy
+        p.unlink()
+        try:
+            os.link(real, p)
+        except OSError:
+            import shutil
+            shutil.copy2(real, p)
+        replaced += 1
+    return replaced
 
 
 def list_refs(namespace: str, name: str) -> dict[str, list[str]]:

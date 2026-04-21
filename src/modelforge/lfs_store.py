@@ -23,6 +23,12 @@ def _object_path(oid: str) -> Path:
     return get_settings().lfs_dir / oid[:2] / oid[2:4] / oid
 
 
+def path_for_oid(oid: str) -> Path | None:
+    """返回 OID 对应的物理路径；不存在返回 None。"""
+    p = _object_path(oid)
+    return p if p.is_file() else None
+
+
 def exists(oid: str) -> bool:
     return _object_path(oid).is_file()
 

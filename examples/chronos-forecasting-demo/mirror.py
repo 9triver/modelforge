@@ -73,8 +73,8 @@ def main() -> None:
     print(f"[3/3] 上传到 {url}/{TARGET_REPO}")
     hub = ModelHub(url, token=token, cache_dir="/tmp/mf-publish-cache")
     hub.upload_folder(
-        folder=stage,
         repo=TARGET_REPO,
+        folder_path=stage,
         commit_message="mirror: amazon/chronos-t5-tiny + evaluator handler",
     )
     print(f"OK → {url}/{TARGET_REPO}")
