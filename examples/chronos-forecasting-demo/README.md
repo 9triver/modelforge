@@ -23,7 +23,7 @@ systemctl --user restart modelforge.service
 ```bash
 # 先到 ModelForge 建个 token（或复用现有 token）
 export MODELFORGE_TOKEN=<your-token>
-export MODELFORGE_URL=http://192.168.30.134:6000   # 或省略，脚本默认值
+export MODELFORGE_URL=http://192.168.30.134:8000   # 或省略，脚本默认值
 
 pip install huggingface_hub    # 仅 mirror 脚本需要
 python examples/chronos-forecasting-demo/mirror.py
@@ -45,7 +45,7 @@ python examples/chronos-forecasting-demo/make_dataset.py
 
 ## 3. 浏览器里跑评估
 
-1. 打开 http://192.168.30.134:6000/amazon/chronos-t5-tiny
+1. 打开 http://192.168.30.134:8000/amazon/chronos-t5-tiny
 2. 点 **Evaluate** tab
 3. 拖入 `synthetic_load.csv`
 4. **Run evaluation**

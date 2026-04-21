@@ -6,7 +6,7 @@ Workflow:
   3. ModelHub.upload_folder 推到 ModelForge（自动建 repo + LFS + push）
 
 Env:
-  MODELFORGE_URL   默认 http://192.168.30.134:6000
+  MODELFORGE_URL   默认 http://192.168.30.134:8000
   MODELFORGE_TOKEN 必填（到目标 ModelForge 建 token；内网部署 token 可临时 disabled 但 create_repo 仍需 user）
 
 用法：
@@ -24,7 +24,7 @@ OVERLAY = HERE / "overlay"
 
 HF_REPO = "amazon/chronos-t5-tiny"
 TARGET_REPO = "amazon/chronos-t5-tiny"   # namespace/name on ModelForge
-DEFAULT_URL = "http://192.168.30.134:6000"
+DEFAULT_URL = "http://192.168.30.134:8000"
 
 
 def main() -> None:
