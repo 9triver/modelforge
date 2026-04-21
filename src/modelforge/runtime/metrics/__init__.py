@@ -1,7 +1,6 @@
-"""标准指标实现。按 task 提供默认指标集：
+"""标准指标实现。按 task 提供默认指标集。"""
+from __future__ import annotations
 
-- forecasting: mape, rmse, mae, smape
-- classification: accuracy, precision, recall, f1_macro
+from . import classification, forecasting
 
-Phase 2 实现。
-"""
+__all__ = ["forecasting", "classification"]
