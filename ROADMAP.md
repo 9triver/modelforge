@@ -118,23 +118,28 @@ GET /api/v1/repos/{ns}/{name}/metrics
 
 ### Phase 2 交付物
 
-- [ ] `modelforge_runtime/` 子包：TaskHandler 基类 + 两个 pilot task 实现
-- [ ] `modelforge_runtime/datasets/`：标准数据 loader（CSV/Parquet、ImageFolder）
-- [ ] `modelforge_runtime/metrics/`：标准指标实现
+- [x] `modelforge.runtime/` 子包：TaskHandler 基类 + 两个 pilot task（forecasting / image-classification）
+- [x] `runtime/datasets/`：CSV/Parquet loader、ImageFolder loader、ZIP 解压防 zip-slip
+- [x] `runtime/metrics/`：forecasting（MAPE/RMSE/MAE/sMAPE）+ classification（accuracy/macro P/R/F1）
+- [x] `runtime/evaluator.py`：in-process backend，handler 动态 import + 基类校验 + 异常兜底
+- [x] 后端 `api/evaluations.py`：POST upload → BackgroundTasks 跑 → 返回 evaluation_id
+- [x] EvaluationStore（SQLite `evaluations` 表）：只存 `(repo_id, revision, metrics, duration, ts)`，不关联用户/不留输入数据
+- [x] 前端：RepoPage 加 Evaluate tab（拖文件 → 状态轮询 → 指标表，primary metric 高亮）
+- [x] 前端：Card tab 顶部 PerformanceBadge（匿名聚合 count/median/p25/p75，count==0 时隐藏）
+- [x] LFS 指针实化：`repo_reader.materialize_lfs()` 把 checkout 出来的指针替换成 lfs_store 里的真文件
+- [x] 端到端 demo 跑通：`examples/chronos-forecasting-demo/` 镜像 HF amazon/chronos-t5-tiny +
+      合成数据生成脚本；浏览器里能点出 MAPE，Performance badge 能聚合
 - [ ] Docker 镜像 `modelforge-runtime:base|timeseries|vision`，CI 构建推到内网 registry
-- [ ] 后端 `api/evaluate.py`：上传 → 入队 → 容器执行 → 返回结果
-- [ ] EvaluationStore（SQLite）：只存匿名 `(model_id, revision, metrics, duration, ts)`
-- [ ] 前端：model card 加 "Evaluate" tab（拖文件 → 看进度 → 看指标）
-- [ ] 前端：model card 加 "Performance" 区块（聚合指标）
-- [ ] 端到端 demo：TimesFM forecasting + 一个 ResNet-style image-classifier
+- [ ] Evaluator Docker sandbox backend：`--network none` + 只读挂载 + 资源限额 + 超时
+- [ ] image-classification 端到端 demo（forecasting 已验证，vision 还欠 demo）
 
 ### Phase 2 验收
 
-- 上传内网某条线路的 96 步负荷 CSV，10 s 内拿到 MAPE
-- 上传一个图像 ZIP，1 min 内拿到 accuracy
-- 评估期间宿主机网络 / 文件系统不可被 handler 访问
-- model card 上能看到该模型的历史 MAPE 中位数
-- 评估完，宿主机 `/tmp` 干净，没有用户数据残留
+- [x] 上传 hourly 合成负荷 CSV（336 行），几秒内拿到 MAPE（Chronos T5 tiny on GPU）
+- [x] model card 上能看到该模型的历史 primary metric 中位数（PerformanceBadge）
+- [x] 评估完，宿主机 workdir 干净（tempdir + `shutil.rmtree(workdir, ignore_errors=True)`）
+- [ ] 上传一个图像 ZIP，1 min 内拿到 accuracy（image-classification demo 未做）
+- [ ] 评估期间宿主机网络 / 文件系统不可被 handler 访问（当前 in-process，**未隔离**；待 Docker backend）
 
 ---
 

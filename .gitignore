@@ -8,3 +8,6 @@ __pycache__/
 build/
 dist/
 .DS_Store
+
+# demo dataset 输出，不入仓
+synthetic_load.csv

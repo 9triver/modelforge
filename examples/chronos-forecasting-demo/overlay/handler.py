@@ -45,7 +45,7 @@ class Handler(ForecastingHandler):
 
         # forecast: tensor of shape (num_series=1, num_samples, horizon)
         forecast = self.pipeline.predict(
-            context=context,
+            inputs=context,
             prediction_length=HORIZON,
             num_samples=20,
         )
