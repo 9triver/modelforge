@@ -458,11 +458,14 @@ class ModelHub:
     ) -> str:
         """从 Hugging Face Hub 下载模型并推送到 ModelForge。
 
-        优先使用 hfd.sh（aria2c 多线程断点续传，hf-mirror 官方推荐）；
-        找不到 hfd.sh 时回退到 huggingface_hub.snapshot_download。
+        在子进程中调用 huggingface_hub.snapshot_download，干净隔离环境变量
+        （HF_ENDPOINT 必须在 import huggingface_hub 之前设置才生效）。
+
+        默认走 self.hf_endpoint（hf-mirror.com），不使用代理。
+        可选：pip install hf_transfer  # 启用后多线程下载
 
         Args:
-            hf_repo_id: HF 仓库 ID，如 "google/timesfm-2.0-500m-pytorch"
+            hf_repo_id: HF 仓库 ID，如 "amazon/chronos-bolt-tiny"
             repo_name: ModelForge 仓库名（默认取 HF repo 的 model name 部分）
             revision: HF 上的 revision
             commit_message: commit 信息（默认自动生成）
@@ -477,40 +480,26 @@ class ModelHub:
         tmp_root = Path(tempfile.mkdtemp(prefix="modelforge-hf-"))
         local_dir = tmp_root / repo_name
 
-        hfd = shutil.which("hfd.sh") or shutil.which("hfd")
-        if hfd and shutil.which("aria2c"):
-            self._log(f"⬇ Downloading {hf_repo_id} via hfd.sh (aria2c, {self.hf_endpoint})...")
-            env = os.environ.copy()
-            # 关掉代理，hf-mirror.com 国内直连更稳
-            for k in ("http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
-                env.pop(k, None)
-            env["HF_ENDPOINT"] = self.hf_endpoint
-            try:
-                subprocess.run(
-                    [hfd, hf_repo_id,
-                     "--local-dir", str(local_dir),
-                     "--revision", revision,
-                     "--tool", "aria2c", "-x", "8", "-j", "5"],
-                    env=env, check=True,
-                )
-            except subprocess.CalledProcessError as e:
-                raise ModelHubError(f"hfd.sh 下载失败（exit {e.returncode}）") from e
-        else:
-            try:
-                from huggingface_hub import snapshot_download as hf_download
-            except ImportError:
-                raise ModelHubError(
-                    "需要 hfd.sh（推荐）或 huggingface_hub：\n"
-                    "  curl -sSL https://hf-mirror.com/hfd/hfd.sh -o ~/.local/bin/hfd.sh && chmod +x ~/.local/bin/hfd.sh\n"
-                    "  或 pip install huggingface_hub"
-                )
-            os.environ["HF_ENDPOINT"] = self.hf_endpoint
-            self._log(f"⬇ Downloading {hf_repo_id} via huggingface_hub ({self.hf_endpoint})...")
-            hf_download(
-                hf_repo_id,
-                revision=revision,
-                local_dir=str(local_dir),
+        # 干净环境：只保留 PATH/HOME/HF_ENDPOINT/HF_HUB_ENABLE_HF_TRANSFER
+        env = {
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": os.environ.get("HOME", ""),
+            "HF_ENDPOINT": self.hf_endpoint,
+            "HF_HUB_ENABLE_HF_TRANSFER": "1",
+        }
+
+        self._log(f"⬇ Downloading {hf_repo_id} from {self.hf_endpoint}...")
+        script = (
+            "from huggingface_hub import snapshot_download;"
+            f"snapshot_download({hf_repo_id!r}, revision={revision!r}, local_dir={str(local_dir)!r})"
+        )
+        try:
+            subprocess.run(
+                [sys.executable, "-c", script],
+                env=env, check=True,
             )
+        except subprocess.CalledProcessError as e:
+            raise ModelHubError(f"HF 下载失败（exit {e.returncode}）") from e
 
         self._log(f"⬆ Pushing to ModelForge as '{repo_name}'...")
         self._ensure_repo_exists(repo_name)
