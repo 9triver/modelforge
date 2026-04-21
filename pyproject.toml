@@ -25,6 +25,14 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.3",
 ]
+# runtime extras：评估容器镜像按 task 装对应组，主包保持轻
+runtime-timeseries = [
+    "pandas>=2.0",
+    "pyarrow>=15.0",
+]
+runtime-vision = [
+    "Pillow>=10.0",
+]
 
 [project.scripts]
 modelforge = "modelforge.cli:app"
