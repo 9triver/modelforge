@@ -16,41 +16,42 @@ mkdir -p /home/chun/modelforge-data
 
 ### 2. 首次构建
 
+> ⚠️ Ubuntu 22.04+ 的系统 Python 受 PEP 668 保护，**禁止直接 `pip install`**（会报 `externally-managed-environment`）。必须先建 venv，所有 pip / modelforge 命令都走 `.venv/bin/...`。
+
 ```bash
+# 后端：先建 venv（这一步必须先做）
+cd /home/chun/modelforge
+sudo apt install -y python3-venv     # 若未装
+python3 -m venv .venv
+.venv/bin/pip install -U pip
+.venv/bin/pip install -e .
+
 # 前端
 cd /home/chun/modelforge/web
 corepack enable pnpm    # 若已有 pnpm 可跳过
 pnpm install --frozen-lockfile
 pnpm build
-
-# 后端
-cd /home/chun/modelforge
-python3 -m venv .venv
-.venv/bin/pip install -U pip
-.venv/bin/pip install -e .
 ```
 
-### 3. 注册 systemd 服务
+### 3. 注册 systemd **user** 服务
+
+本项目用 user-mode systemd（不需要 sudo 重启，workflow 里直接 `systemctl --user restart`）。
 
 ```bash
-sudo cp /home/chun/modelforge/deploy/modelforge.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now modelforge.service
-sudo systemctl status modelforge.service
+# 让 chun 的 user services 开机自启（不登录也能跑）
+sudo loginctl enable-linger chun
+
+# 放到 user unit 目录
+mkdir -p ~/.config/systemd/user
+cp /home/chun/modelforge/deploy/modelforge.service ~/.config/systemd/user/
+
+systemctl --user daemon-reload
+systemctl --user enable --now modelforge.service
+systemctl --user status modelforge.service
 curl -s http://127.0.0.1:8000/healthz   # 预期 {"status":"ok",...}
 ```
 
-### 4. 允许 runner 无密码重启服务
-
-`.github/workflows/deploy.yml` 里有一行 `sudo systemctl restart modelforge.service`，需要给 `chun` 账号免密权限：
-
-```bash
-sudo visudo -f /etc/sudoers.d/modelforge
-# 填入：
-chun ALL=(root) NOPASSWD: /bin/systemctl restart modelforge.service, /bin/journalctl -u modelforge.service *
-```
-
-### 5. 安装 GitHub self-hosted runner
+### 4. 安装 GitHub self-hosted runner
 
 到 GitHub → 仓库 **Settings → Actions → Runners → New self-hosted runner**，选 Linux x64，按页面上的命令执行（大致如下，token 每次不同）：
 
@@ -92,12 +93,26 @@ curl http://<目标机>:8000/api/v1/repos
 ## 故障排查
 
 ```bash
+# modelforge 服务日志
+journalctl --user -u modelforge.service -n 100 --no-pager
+
 # runner 日志
-sudo journalctl -u actions.runner.9triver-modelforge.$(hostname).service -n 100 --no-pager
+sudo journalctl -u "actions.runner.*" -n 100 --no-pager
 
-# 服务日志
-sudo journalctl -u modelforge.service -n 100 --no-pager
+# 手动重启
+systemctl --user restart modelforge.service
+```
 
-# 手动拉起
-sudo systemctl restart modelforge.service
+## Runner 重置（已注册过要换标签时）
+
+```bash
+cd /home/chun/actions-runner
+
+# 1. 先卸载服务
+sudo ./svc.sh uninstall
+
+# 2. 强制清理本地配置（token 已失效时用 --local 跳过服务端调用）
+./config.sh remove --local
+
+# 3. 到 GitHub 页面重新获取 token，重跑 config.sh
 ```

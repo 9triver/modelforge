@@ -36,7 +36,7 @@ jobs:
           .venv/bin/pip install -e .
 
       - name: Restart service
-        run: sudo /bin/systemctl restart modelforge.service
+        run: /bin/systemctl --user restart modelforge.service
 
       - name: Health check
         run: |
@@ -48,5 +48,5 @@ jobs:
             sleep 2
           done
           echo "health check failed"
-          sudo /bin/journalctl -u modelforge.service -n 50 --no-pager
+          /bin/journalctl -u modelforge.service -n 50 --no-pager
           exit 1
