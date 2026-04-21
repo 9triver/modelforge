@@ -4,6 +4,8 @@
   - ModelHub.list_repos()        列出所有仓库
   - ModelHub.snapshot_download() 下载整个仓库到本地目录
   - ModelHub.upload_folder()     把本地目录作为一次 commit 推到仓库
+  - ModelHub.search()            按 Model Card 字段搜索
+  - ModelHub.mirror_from_hf()    从 Hugging Face Hub 镜像模型到 ModelForge
 
 设计原则：
   - 使用者不需要了解 Git / LFS，只想"分享"和"使用"模型
@@ -15,6 +17,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +28,13 @@ import httpx
 from .schema import ModelCardError, validate_model_card
 
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "modelforge"
+
+LFS_EXTENSIONS = {
+    ".safetensors", ".bin", ".pt", ".pth", ".ckpt", ".h5", ".hdf5",
+    ".onnx", ".tflite", ".pb", ".pkl", ".joblib", ".msgpack",
+    ".tar", ".gz", ".zip", ".parquet", ".arrow",
+}
+LFS_SIZE_THRESHOLD = 10 * 1024 * 1024  # 10 MB
 
 
 @dataclass
@@ -94,21 +104,26 @@ class ModelHub:
         return urlunparse((parsed.scheme, netloc, parsed.path, "", "", "")) + f"/{repo_name}.git"
 
     @staticmethod
-    def _run_git(args: list[str], cwd: Path | None = None, env: dict | None = None) -> None:
-        """运行 git 子进程，失败抛 ModelHubError。"""
+    def _run_git(args: list[str], cwd: Path | None = None, env: dict | None = None) -> str:
+        """运行 git 子进程，失败抛 ModelHubError。返回 stdout。"""
         try:
-            subprocess.run(
+            result = subprocess.run(
                 ["git", *args],
                 cwd=cwd,
                 env=env or os.environ.copy(),
                 check=True,
                 capture_output=True,
             )
+            return result.stdout.decode("utf-8", errors="replace") if result.stdout else ""
         except subprocess.CalledProcessError as e:
             stderr = e.stderr.decode("utf-8", errors="replace") if e.stderr else ""
             raise ModelHubError(
                 f"git {' '.join(args)} 失败（exit {e.returncode}）:\n{stderr}"
             ) from e
+
+    @staticmethod
+    def _log(msg: str) -> None:
+        print(f"  {msg}", file=sys.stderr, flush=True)
 
     # ---------- API 1: list_repos ----------
 
@@ -230,6 +245,39 @@ class ModelHub:
 
     # ---------- API 3: upload_folder ----------
 
+    @staticmethod
+    def _detect_lfs_patterns(folder: Path) -> set[str]:
+        """扫描目录，返回需要 LFS 追踪的 glob 模式集合。
+
+        规则：文件后缀在 LFS_EXTENSIONS 中，或文件大小超过 LFS_SIZE_THRESHOLD。
+        """
+        patterns: set[str] = set()
+        for f in folder.rglob("*"):
+            if not f.is_file() or f.name.startswith("."):
+                continue
+            suffix = f.suffix.lower()
+            if suffix in LFS_EXTENSIONS or f.stat().st_size > LFS_SIZE_THRESHOLD:
+                patterns.add(f"*{suffix}")
+        return patterns
+
+    @staticmethod
+    def _setup_lfs_tracking(workdir: Path, source_folder: Path) -> None:
+        """配置 LFS 追踪：优先复用源目录的 .gitattributes，否则自动检测。"""
+        src_attrs = source_folder / ".gitattributes"
+        if src_attrs.is_file():
+            shutil.copy2(src_attrs, workdir / ".gitattributes")
+            return
+
+        patterns = ModelHub._detect_lfs_patterns(source_folder)
+        if not patterns:
+            return
+
+        for pat in sorted(patterns):
+            subprocess.run(
+                ["git", "lfs", "track", pat],
+                cwd=workdir, capture_output=True,
+            )
+
     def upload_folder(
         self,
         repo_name: str,
@@ -237,14 +285,11 @@ class ModelHub:
         commit_message: str,
         branch: str = "main",
         tag: str | None = None,
+        verbose: bool = True,
     ) -> str:
         """把本地目录的全部内容作为一次 commit 推到仓库。
 
-        工作流程：
-          1. 本地校验 README.md 符合 Model Card 规范（提前失败，不浪费往返）
-          2. 克隆仓库到临时目录
-          3. 把目录内容复制覆盖进去（保留 .git）
-          4. commit + push；可选打 tag
+        自动检测大文件并配置 LFS 追踪。如果源目录已有 .gitattributes 则直接复用。
 
         Args:
             repo_name: 目标仓库名
@@ -252,13 +297,20 @@ class ModelHub:
             commit_message: commit 信息
             branch: 目标分支，默认 main
             tag: 可选的 tag（如 "v1.1"），push 后会额外打并推
+            verbose: 是否输出进度信息
 
         Returns:
             新 commit 的 SHA
         """
+        log = self._log if verbose else lambda _: None
         folder_path = Path(folder_path).resolve()
         if not folder_path.is_dir():
             raise ModelHubError(f"folder_path 不是目录：{folder_path}")
+
+        # 统计文件
+        all_files = [f for f in folder_path.rglob("*") if f.is_file() and f.name != ".git"]
+        total_size = sum(f.stat().st_size for f in all_files)
+        log(f"📦 {len(all_files)} files, {total_size / 1e6:.1f} MB total")
 
         # 1. 本地预校验
         readme = folder_path / "README.md"
@@ -268,21 +320,22 @@ class ModelHub:
             validate_model_card(readme.read_text(encoding="utf-8"))
         except ModelCardError as e:
             raise ModelHubError(f"本地 Model Card 校验失败：\n{e}") from e
+        log("✓ Model Card 校验通过")
 
         git_url = self._authenticated_git_url(repo_name)
 
         with tempfile.TemporaryDirectory(prefix="modelforge-upload-") as tmp:
             workdir = Path(tmp) / repo_name
-            # Clone（支持已有内容的仓库，也支持空仓库）
+            log(f"⬇ Cloning {repo_name}...")
             self._run_git(["clone", "--quiet", git_url, str(workdir)])
 
-            # 确保有 LFS 客户端初始化
+            # LFS 初始化
             try:
                 self._run_git(["lfs", "install", "--local"], cwd=workdir)
             except ModelHubError:
                 pass
 
-            # 2. 切换/创建分支
+            # 切换/创建分支
             result = subprocess.run(
                 ["git", "rev-parse", "--verify", f"origin/{branch}"],
                 cwd=workdir, capture_output=True,
@@ -290,10 +343,9 @@ class ModelHub:
             if result.returncode == 0:
                 self._run_git(["checkout", "-B", branch, f"origin/{branch}"], cwd=workdir)
             else:
-                # 空仓库或分支不存在
                 self._run_git(["checkout", "-B", branch], cwd=workdir)
 
-            # 3. 清空工作区（保留 .git）后复制源目录内容
+            # 清空工作区（保留 .git）
             for child in workdir.iterdir():
                 if child.name == ".git":
                     continue
@@ -302,31 +354,41 @@ class ModelHub:
                 else:
                     child.unlink()
 
+            # 配置 LFS 追踪（在复制文件之前）
+            self._setup_lfs_tracking(workdir, folder_path)
+            lfs_attrs = workdir / ".gitattributes"
+            if lfs_attrs.is_file():
+                tracked = [l.split()[0] for l in lfs_attrs.read_text().splitlines() if "filter=lfs" in l]
+                if tracked:
+                    log(f"🔗 LFS tracking: {', '.join(tracked)}")
+
+            # 复制源目录内容
+            log("📋 Copying files...")
             for child in folder_path.iterdir():
                 if child.name == ".git":
                     continue
                 dest = workdir / child.name
+                if child.name == ".gitattributes" and lfs_attrs.is_file():
+                    continue  # 已经处理过
                 if child.is_dir():
                     shutil.copytree(child, dest)
                 else:
                     shutil.copy2(child, dest)
 
-            # 4. 提交
+            # 提交
             self._run_git(["add", "-A"], cwd=workdir)
 
-            # 检查是否有改动
             diff = subprocess.run(
                 ["git", "diff", "--cached", "--quiet"],
                 cwd=workdir,
             )
             if diff.returncode == 0:
-                # 无改动
                 sha = subprocess.check_output(
                     ["git", "rev-parse", "HEAD"], cwd=workdir, text=True,
                 ).strip()
+                log("⚡ No changes, skipping push")
                 return sha
 
-            # 配置提交作者（借用 Token 身份）
             env = os.environ.copy()
             env.setdefault("GIT_AUTHOR_NAME", self.username)
             env.setdefault("GIT_AUTHOR_EMAIL", f"{self.username}@modelforge")
@@ -335,15 +397,65 @@ class ModelHub:
 
             self._run_git(["commit", "-m", commit_message], cwd=workdir, env=env)
 
-            # Push
+            log(f"⬆ Pushing to {repo_name} ({branch})...")
             self._run_git(["push", "origin", branch], cwd=workdir)
 
-            # Tag（可选）
             if tag:
                 self._run_git(["tag", tag], cwd=workdir)
                 self._run_git(["push", "origin", tag], cwd=workdir)
+                log(f"🏷 Tagged {tag}")
 
             sha = subprocess.check_output(
                 ["git", "rev-parse", "HEAD"], cwd=workdir, text=True,
             ).strip()
+            log(f"✓ Done: {sha[:8]}")
             return sha
+
+    # ---------- API 5: mirror_from_hf ----------
+
+    def mirror_from_hf(
+        self,
+        hf_repo_id: str,
+        repo_name: str | None = None,
+        revision: str = "main",
+        commit_message: str | None = None,
+        tag: str | None = None,
+    ) -> str:
+        """从 Hugging Face Hub 下载模型并推送到 ModelForge。
+
+        需要安装 huggingface_hub：pip install huggingface_hub
+
+        Args:
+            hf_repo_id: HF 仓库 ID，如 "google/timesfm-2.0-500m-pytorch"
+            repo_name: ModelForge 仓库名（默认取 HF repo 的 model name 部分）
+            revision: HF 上的 revision
+            commit_message: commit 信息（默认自动生成）
+            tag: 可选 tag
+
+        Returns:
+            新 commit 的 SHA
+        """
+        try:
+            from huggingface_hub import snapshot_download as hf_download
+        except ImportError:
+            raise ModelHubError(
+                "mirror_from_hf 需要 huggingface_hub：pip install huggingface_hub"
+            )
+
+        if repo_name is None:
+            repo_name = hf_repo_id.split("/")[-1]
+
+        self._log(f"⬇ Downloading {hf_repo_id} from Hugging Face...")
+        local_dir = Path(tempfile.mkdtemp(prefix="modelforge-hf-")) / repo_name
+        hf_download(
+            hf_repo_id,
+            revision=revision,
+            local_dir=str(local_dir),
+        )
+
+        self._log(f"⬆ Pushing to ModelForge as '{repo_name}'...")
+        msg = commit_message or f"Mirror from HF: {hf_repo_id} ({revision})"
+        try:
+            return self.upload_folder(repo_name, local_dir, msg, tag=tag)
+        finally:
+            shutil.rmtree(local_dir.parent, ignore_errors=True)

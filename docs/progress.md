@@ -14,11 +14,15 @@
 - LFS 物件上传（PUT）、下载（GET）、验证（POST verify）
 - SHA256 两级目录分片存储（`lfs/ab/cd/{oid}`）
 
-### Phase 3a — Python SDK
+### Python SDK
 - `ModelHub.list_repos()` — 列出所有仓库
 - `ModelHub.snapshot_download()` — 克隆仓库到本地缓存（含 LFS pull）
 - `ModelHub.upload_folder()` — 本地目录一键推送（含 Model Card 预校验 + 可选 tag）
+  - LFS 自动追踪：扫描大文件（>10MB）和已知后缀（.safetensors/.bin/.ckpt/.pkl/...），自动 `git lfs track`
+  - 复用已有 `.gitattributes`：如果源目录已有（如从 HF 下载的），直接使用
+  - 进度输出：文件数/总大小、LFS 追踪模式、push 进度
 - `ModelHub.search()` — 按 Model Card 字段组合搜索
+- `ModelHub.mirror_from_hf()` — 从 Hugging Face Hub 镜像模型到 ModelForge（一行代码）
 
 ### Phase 3b — Web UI（HF 风格）
 - 首页：左侧 faceted filter sidebar（Library / Task / Tag / Max MAPE）+ 模型卡片列表
