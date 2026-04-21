@@ -36,6 +36,12 @@ jobs:
           .venv/bin/pip install --upgrade pip
           .venv/bin/pip install -e .
 
+      - name: Sync systemd user unit
+        run: |
+          mkdir -p "$HOME/.config/systemd/user"
+          install -m 644 "$REPO_DIR/deploy/modelforge.service" "$HOME/.config/systemd/user/modelforge.service"
+          /bin/systemctl --user daemon-reload
+
       - name: Restart service
         run: /bin/systemctl --user restart modelforge.service
 
@@ -49,5 +55,5 @@ jobs:
             sleep 2
           done
           echo "health check failed"
-          /bin/journalctl -u modelforge.service -n 50 --no-pager
+          /bin/journalctl --user -u modelforge.service -n 100 --no-pager
           exit 1
