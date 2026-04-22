@@ -13,10 +13,21 @@ RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ \
 
 COPY . /opt/modelforge
 COPY wheels/ /tmp/wheels/
-RUN pip install --no-cache-dir --break-system-packages --no-deps /tmp/wheels/*.whl \
+
+# torch/torchvision 从本地 wheel 装（--no-deps 跳过 CUDA 依赖，镜像已自带）
+RUN pip install --no-cache-dir --break-system-packages --no-deps /tmp/wheels/*.whl
+
+# 用 constraint 文件阻止 pip 下载任何 nvidia-* / triton 包（镜像已有 CUDA runtime）
+RUN printf '%s\n' \
+    'nvidia-cublas-cu12' 'nvidia-cuda-cupti-cu12' 'nvidia-cuda-nvrtc-cu12' \
+    'nvidia-cuda-runtime-cu12' 'nvidia-cudnn-cu12' 'nvidia-cufft-cu12' \
+    'nvidia-curand-cu12' 'nvidia-cusolver-cu12' 'nvidia-cusparse-cu12' \
+    'nvidia-nccl-cu12' 'nvidia-nvjitlink-cu12' 'nvidia-nvtx-cu12' 'triton' \
+    | sed 's/$/==0.0.0/' > /tmp/skip-nvidia.txt \
  && pip install --no-cache-dir --break-system-packages \
+    -c /tmp/skip-nvidia.txt \
     /opt/modelforge[runtime-vision,runtime-detection] transformers ultralytics \
- && rm -rf /tmp/wheels
+ && rm -rf /tmp/wheels /tmp/skip-nvidia.txt
 
 WORKDIR /workspace
 ENTRYPOINT ["python", "-m", "modelforge.runtime.sandbox_entry"]
