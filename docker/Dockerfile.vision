@@ -13,7 +13,7 @@ RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ \
 
 COPY . /opt/modelforge
 RUN pip install --no-cache-dir --break-system-packages \
-    torch torchvision --index-url https://mirror.sjtu.edu.cn/pytorch-wheels/cu121 \
+    torch==2.6.0 torchvision --index-url https://mirror.sjtu.edu.cn/pytorch-wheels/cu124 \
  && pip install --no-cache-dir --break-system-packages \
     /opt/modelforge[runtime-vision,runtime-detection] transformers ultralytics
 
