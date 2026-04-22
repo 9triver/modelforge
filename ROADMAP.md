@@ -138,8 +138,16 @@ GET /api/v1/repos/{ns}/{name}/metrics
 - [x] 上传 hourly 合成负荷 CSV（336 行），几秒内拿到 MAPE（Chronos T5 tiny on GPU）
 - [x] model card 上能看到该模型的历史 primary metric 中位数（PerformanceBadge）
 - [x] 评估完，宿主机 workdir 干净（tempdir + `shutil.rmtree(workdir, ignore_errors=True)`）
-- [ ] 上传一个图像 ZIP，1 min 内拿到 accuracy（image-classification demo 未做）
+- [x] 上传图像 ZIP，拿到 accuracy（ViT cats-vs-dogs demo 已验证）
 - [ ] 评估期间宿主机网络 / 文件系统不可被 handler 访问（当前 in-process，**未隔离**；待 Docker backend）
+
+### Task 扩展（已完成）
+
+| task | handler | metrics | demo |
+|---|---|---|---|
+| `time-series-forecasting` | ForecastingHandler | MAPE/RMSE/MAE/sMAPE | amazon/chronos-t5-tiny ✅ |
+| `image-classification` | ImageClassificationHandler | accuracy/P/R/F1 macro | nateraw/vit-base-cats-vs-dogs ✅ |
+| `object-detection` | ObjectDetectionHandler | mAP/mAP_50/mAP_75/mAR (pycocotools) | ultralytics/yolov8n ✅ |
 
 ---
 
@@ -155,30 +163,68 @@ GET /api/v1/repos/{ns}/{name}/metrics
 
 ### Phase 3 交付物
 
-- [ ] `modelforge` Python SDK（已有壳，补 `load()` / `Handler` 抽象）
-- [ ] 本地缓存 + LFS 增量下载
-- [ ] CLI 子命令 `modelforge run`
-- [ ] model card "Use this model" 区块，按 task 给代码片段
+- [x] `modelforge.load()` 顶层 API：下载 + 缓存 + 返回可调用 handler
+- [x] CLI `modelforge run`：按 task 分发 I/O（forecasting CSV / classification ImageFolder / detection JSON）
+- [x] 前端 "Use this model" 代码片段（Python + CLI，按 task 渲染）
+- [x] Files tab 单文件下载（普通文件 git show / LFS 文件流式返回）
+- [x] 模型页面删除按钮（确认后删除，内网简化无需 token）
 
 ---
 
-## Phase 4 — 校准 / 迁移（占位，待 L2/L3 收集到 use case 后细化）
+## Phase 4 — 校准 / 迁移
 
-**目标**：评估不达标时，让用户在平台上做校准 / fine-tune / 迁移，产出新版本回写仓库。
+**目标**：评估不达标时，让用户在平台上做校准 / 迁移，产出新版本 fork 到新仓库。
 
-候选机制（先列方向，不展开）：
-- 残差校准（residual model 叠加）
-- Bias correction
-- Fine-tune（小样本，task 内置 trainer）
-- Domain adaptation
-- 评估 → 校准 → 再评估 的闭环 UI
+### 4a. 时序预测校准（已完成 ✅）
 
-待定问题：
-- trainer 是不是也要 task 化（按 task 提供默认 trainer）
-- 校准产出的新版本怎么命名（`v1.2-calibrated-{user_data_hash}`？还是 fork 出新仓库？）
-- 计算资源调度（fine-tune 比 inference 重得多）
+三种方法，用户上传目标区域数据 → 同时预览三种方法的 before/after 对比 → 选最好的 fork：
 
-> 此阶段在 Phase 2/3 跑通、收集到真实 use case 后再细化。
+| 方法 | 原理 | 参数 |
+|---|---|---|
+| `linear_bias` | 全局 `y = a*pred + b` | `{a, b}` |
+| `segmented` | 按小时分 4 段（0-5/6-11/12-17/18-23），每段独立 (a, b) | `{segments: {0: {a,b}, ...}}` |
+| `stacking` | GradientBoostingRegressor 拟合残差（特征：pred + hour + dayofweek + month） | `{model_b64: base64(pickle)}` |
+
+交互流程：
+1. Evaluate tab → 看到 MAPE 不达标 → "指标不理想？试试校准 →"
+2. Calibrate tab → 上传 CSV → "Preview all methods"
+3. 三行对比表（Before/After MAPE/RMSE/MAE）→ radio 选最佳
+4. 填 fork namespace/name → "Save as new model" → fork 仓库
+5. fork 仓库自包含（base_model/ + wrapper handler + calibration.json）
+
+交付物：
+- [x] `runtime/calibration.py`：三种方法 + `calibrate_by_method()` 分发 + 每种方法独立 handler template
+- [x] `api/calibrations.py`：两阶段 API（preview 不建仓库 / save 才 fork）
+- [x] `db.py`：calibrations 表 + CRUD
+- [x] 前端 CalibrateTab：多方法对比表 + 两阶段 UX
+- [x] 评估 → 校准衔接（EvaluationStatus 底部引导链接）
+- [x] `pyproject.toml`：`runtime-calibration` optional deps（scikit-learn）
+
+### 4b. CV 迁移（未来）
+
+| task | 推荐方法 | 原理 | 数据量 | 计算量 | 优先级 |
+|---|---|---|---|---|---|
+| image-classification | **Linear Probe** | 冻结 backbone，提取特征向量，训练新线性分类头（sklearn） | 每类 5-10 张 | CPU 秒级 | 高 |
+| image-classification | Fine-tune 最后几层 | 冻结 backbone 前 N 层，训练后几层 + 分类头 | 每类 50+ 张 | GPU 分钟级 | 中 |
+| image-classification | Adapter / Prompt tuning | 插入小参数模块，冻结主体 | 每类 10-50 张 | GPU 轻量 | 低（依赖模型架构） |
+| object-detection | Fine-tune 检测头 | 冻结 backbone，训练检测头（anchor/NMS/bbox reg） | 100+ 标注图 | GPU 十分钟级 | 低（标注成本高） |
+
+**为什么 CV 迁移比时序难**：
+- 时序输出是一维连续值，`y = a*pred + b` 就能修正系统性偏移
+- CV 输出是离散类别或坐标+类别，必须回到特征空间做调整
+- 最小 MVP（linear probe）也需要碰模型内部（提取中间层特征）
+
+**Linear Probe 实现思路**（如果要做）：
+```
+用户上传少量标注图（ImageFolder 格式）
+  → 平台冻结模型 backbone，提取特征向量
+  → sklearn LogisticRegression 训练新分类头（秒级，CPU）
+  → 替换原模型分类头
+  → 返回 before/after accuracy 对比
+  → 满意 → fork（base_model/ + 新分类头权重 + wrapper handler）
+```
+
+> 此部分在时序校准收集到真实 use case 反馈后再启动。
 
 ---
 
@@ -189,8 +235,8 @@ GET /api/v1/repos/{ns}/{name}/metrics
 - 不要图省事用 subprocess + resource limit 凑合
 
 ### Task 扩展节奏
-- Phase 2 锁定 forecasting + image-classification 两个
-- 后续按 use case 加：`tabular-classification`、`tabular-regression`、`object-detection`、`text-classification`、`token-classification`、`image-segmentation`
+- Phase 2 锁定 forecasting + image-classification 两个 → 已扩展到 object-detection
+- 后续按 use case 加：`tabular-classification`、`tabular-regression`、`text-classification`、`token-classification`、`image-segmentation`
 - 每加一个 task = 数据 loader + metrics + handler 基类 + runtime 镜像（如有新依赖）+ 前端展示
 
 ### 不做的事
