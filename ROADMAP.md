@@ -204,31 +204,54 @@ GET /api/v1/repos/{ns}/{name}/metrics
 - [x] 评估 → 校准衔接（EvaluationStatus 底部引导链接）
 - [x] `pyproject.toml`：`runtime-calibration` optional deps（scikit-learn）
 
-### 4b. CV 迁移（未来）
+### 4b. CV 迁移
 
-| task | 推荐方法 | 原理 | 数据量 | 计算量 | 优先级 |
-|---|---|---|---|---|---|
-| image-classification | **Linear Probe** | 冻结 backbone，提取特征向量，训练新线性分类头（sklearn） | 每类 5-10 张 | CPU 秒级 | 高 |
-| image-classification | Fine-tune 最后几层 | 冻结 backbone 前 N 层，训练后几层 + 分类头 | 每类 50+ 张 | GPU 分钟级 | 中 |
-| image-classification | Adapter / Prompt tuning | 插入小参数模块，冻结主体 | 每类 10-50 张 | GPU 轻量 | 低（依赖模型架构） |
-| object-detection | Fine-tune 检测头 | 冻结 backbone，训练检测头（anchor/NMS/bbox reg） | 100+ 标注图 | GPU 十分钟级 | 低（标注成本高） |
+#### Linear Probe（已完成 ✅）
 
-**为什么 CV 迁移比时序难**：
-- 时序输出是一维连续值，`y = a*pred + b` 就能修正系统性偏移
-- CV 输出是离散类别或坐标+类别，必须回到特征空间做调整
-- 最小 MVP（linear probe）也需要碰模型内部（提取中间层特征）
+冻结 backbone，提取倒数第二层特征（`handler.extract_features()`），sklearn LogisticRegression 训练新分类头。
 
-**Linear Probe 实现思路**（如果要做）：
-```
-用户上传少量标注图（ImageFolder 格式）
-  → 平台冻结模型 backbone，提取特征向量
-  → sklearn LogisticRegression 训练新分类头（秒级，CPU）
-  → 替换原模型分类头
-  → 返回 before/after accuracy 对比
-  → 满意 → fork（base_model/ + 新分类头权重 + wrapper handler）
-```
+- 适用：源域和目标域特征空间相近（如 ImageNet → 电力设备外观分类）
+- 数据量：每类 5-30 张
+- 计算量：CPU 秒级
+- 类别可变：base 是猫狗分类器 → 迁移后变成绝缘子缺陷分类器
 
-> 此部分在时序校准收集到真实 use case 反馈后再启动。
+交付物：
+- [x] `ImageClassificationHandler.extract_features()` 抽象接口
+- [x] ViT cats-vs-dogs handler 实现（取 `[CLS]` token）
+- [x] `runtime/transfer.py`：TransferResult + linear_probe + generate_transfer_repo + handler template
+- [x] `api/transfers.py`：两阶段 API（preview / save）
+- [x] `db.py`：transfers 表 + CRUD
+- [x] 前端 TransferTab（独立 tab，与 Calibrate 平级）
+- [x] `make_transfer_dataset.py`：CIFAR-10 子集生成器（验证用）
+
+#### Fine-tune 最后几层（未来）
+
+Linear probe 碰壁时的下一步 — 解冻 backbone 最后 2-3 层 + 分类头，跑 PyTorch 训练循环。
+
+**触发条件**：linear probe accuracy < 0.7 且数据质量没问题（说明 base 特征空间跟目标域差异太大）。
+
+| 维度 | Linear Probe（已有） | Fine-tune（未来） |
+|---|---|---|
+| 改什么 | 只训练 sklearn 分类头 | 解冻最后几层 + 新分类头 |
+| 权重变化 | base 不变，新增几 KB | base 部分更新，几百 MB |
+| 数据量 | 每类 5-30 张 | 每类 50-100 张 |
+| 计算 | CPU 秒级 | GPU 分钟级 |
+| 过拟合风险 | 低 | 中（数据少时严重） |
+
+**设计要点**：
+
+1. **handler 接口**：`fine_tune(images, labels, *, epochs, lr, unfreeze_layers)` — 模型作者实现训练逻辑，平台只调接口（跟 `extract_features` 同一思路）
+2. **权重存储**：fork 仓库直接放新权重（替换 base），不做 LoRA/adapter diff（MVP 简单优先）
+3. **超参数**：前端加 epochs / lr / unfreeze_layers 输入，给合理默认值
+4. **GPU 训练**：Docker sandbox 这时真的需要了（GPU 训练 + 用户代码 = 更大风险）
+5. **进度展示**：status 加 epoch 进度（当前只有 queued/running/previewed）
+6. **工程量**：约 linear probe 的 5-10 倍
+
+#### Object-detection fine-tune（远期）
+
+冻结 backbone，训练检测头。需要 COCO 格式标注（100+ 标注图），GPU 十分钟级。标注成本高，等真实需求。
+
+> Fine-tune 和 object-detection 迁移在 linear probe 收集到真实电力场景反馈后再启动。
 
 ---
 
