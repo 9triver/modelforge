@@ -105,7 +105,14 @@ export default function RepoPage() {
           </div>
         )}
 
-        {tab === 'files' && <FileList files={preview.files} />}
+        {tab === 'files' && (
+          <FileList
+            files={preview.files}
+            namespace={namespace}
+            name={name}
+            revision={revision}
+          />
+        )}
 
         {tab === 'evaluate' && (
           <EvaluateTab
