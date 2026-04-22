@@ -5,9 +5,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY . /opt/modelforge
-RUN pip install --no-cache-dir \
-    /opt/modelforge[runtime-timeseries,runtime-calibration] \
-    torch --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+ && pip install --no-cache-dir /opt/modelforge[runtime-timeseries,runtime-calibration]
 
 WORKDIR /workspace
 ENTRYPOINT ["python", "-m", "modelforge.runtime.sandbox_entry"]
