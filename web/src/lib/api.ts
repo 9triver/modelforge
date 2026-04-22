@@ -107,3 +107,18 @@ export async function saveCalibration(
 export function getCalibration(id: number): Promise<CalibrationRecord> {
   return getJSON(`/api/v1/calibrations/${id}`);
 }
+
+export async function deleteRepo(
+  namespace: string,
+  name: string,
+  token: string,
+): Promise<void> {
+  const res = await fetch(`/api/v1/repos/${namespace}/${name}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`${res.status} ${res.statusText}: ${body}`);
+  }
+}

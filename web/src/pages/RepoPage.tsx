@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { getPreview, getRepoMetrics } from '../lib/api';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { getPreview, getRepoMetrics, deleteRepo } from '../lib/api';
 import type { AggregateMetrics, Preview } from '../lib/types';
 import CalibrateTab from '../components/CalibrateTab';
 import EvaluateTab from '../components/EvaluateTab';
@@ -23,6 +23,12 @@ export default function RepoPage() {
   const [agg, setAgg] = useState<AggregateMetrics | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const [showDelete, setShowDelete] = useState(false);
+  const [deleteToken, setDeleteToken] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   const loadAgg = useCallback(() => {
     getRepoMetrics(namespace, name).then(setAgg).catch(() => setAgg(null));
@@ -192,6 +198,59 @@ export default function RepoPage() {
             </div>
           </div>
         )}
+
+        <div className="bg-white border border-red-200 rounded p-4">
+          {!showDelete ? (
+            <button
+              onClick={() => setShowDelete(true)}
+              className="text-xs text-red-500 hover:text-red-700"
+            >
+              Delete this repository
+            </button>
+          ) : (
+            <div className="space-y-2">
+              <div className="text-xs text-red-700 font-semibold">
+                确认删除 {preview.full_name}？此操作不可撤销。
+              </div>
+              <input
+                type="password"
+                value={deleteToken}
+                onChange={(e) => setDeleteToken(e.target.value)}
+                placeholder="输入 Token 确认"
+                className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+              />
+              {deleteError && (
+                <div className="text-xs text-red-600">{deleteError}</div>
+              )}
+              <div className="flex gap-2">
+                <button
+                  disabled={!deleteToken || deleting}
+                  onClick={async () => {
+                    setDeleting(true);
+                    setDeleteError(null);
+                    try {
+                      await deleteRepo(namespace, name, deleteToken);
+                      navigate('/');
+                    } catch (e: any) {
+                      setDeleteError(e.message || String(e));
+                    } finally {
+                      setDeleting(false);
+                    }
+                  }}
+                  className="px-3 py-1 text-xs rounded bg-red-600 text-white disabled:bg-gray-300"
+                >
+                  {deleting ? '删除中…' : '确认删除'}
+                </button>
+                <button
+                  onClick={() => { setShowDelete(false); setDeleteToken(''); setDeleteError(null); }}
+                  className="px-3 py-1 text-xs rounded border border-gray-300 hover:bg-gray-50"
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </aside>
     </div>
   );
