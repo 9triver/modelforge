@@ -66,19 +66,23 @@ def list_files(namespace: str, name: str, revision: str) -> list[FileEntry]:
         size = int(size_str) if size_str != "-" else 0
 
         is_lfs = False
-        # 小文件可能是 LFS 指针；检查内容
+        # 小文件可能是 LFS 指针；检查内容（用 bytes 模式避免非 UTF-8 文件炸）
         if 0 < size < 1024:
             try:
-                content = _git(namespace, name, "show", f"{revision}:{path}")
-                if content.startswith("version https://git-lfs.github.com"):
+                path_obj = storage.repo_path(namespace, name)
+                raw = subprocess.run(
+                    ["git", f"--git-dir={path_obj}", "show", f"{revision}:{path}"],
+                    capture_output=True,
+                )
+                if raw.returncode == 0 and raw.stdout.startswith(b"version https://git-lfs.github.com"):
                     is_lfs = True
-                    for ln in content.split("\n"):
+                    for ln in raw.stdout.decode("utf-8", errors="replace").split("\n"):
                         if ln.startswith("size "):
                             try:
                                 size = int(ln[5:])
                             except ValueError:
                                 pass
-            except FileNotFoundError:
+            except Exception:
                 pass
 
         entries.append(FileEntry(path=path, size=size, is_lfs=is_lfs, mode=mode))
