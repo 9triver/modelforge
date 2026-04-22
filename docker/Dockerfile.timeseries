@@ -4,10 +4,11 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ \
+ && pip config set global.trusted-host mirrors.aliyun.com
 
 COPY . /opt/modelforge
-RUN pip install --no-cache-dir torch \
+RUN pip install --no-cache-dir torch torchvision --index-url https://mirror.sjtu.edu.cn/pytorch-wheels/cpu \
  && pip install --no-cache-dir /opt/modelforge[runtime-timeseries,runtime-calibration]
 
 WORKDIR /workspace

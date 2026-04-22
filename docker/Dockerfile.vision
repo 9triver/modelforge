@@ -8,12 +8,14 @@ RUN apt-get update \
     && ln -sf /usr/bin/python3 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple --break-system-packages
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ --break-system-packages \
+ && pip config set global.trusted-host mirrors.aliyun.com --break-system-packages
 
 COPY . /opt/modelforge
 RUN pip install --no-cache-dir --break-system-packages \
-    /opt/modelforge[runtime-vision,runtime-detection] \
-    torch torchvision transformers ultralytics
+    torch torchvision --index-url https://mirror.sjtu.edu.cn/pytorch-wheels/cu121 \
+ && pip install --no-cache-dir --break-system-packages \
+    /opt/modelforge[runtime-vision,runtime-detection] transformers ultralytics
 
 WORKDIR /workspace
 ENTRYPOINT ["python", "-m", "modelforge.runtime.sandbox_entry"]
