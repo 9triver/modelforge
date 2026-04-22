@@ -8,6 +8,8 @@ RUN apt-get update \
     && ln -sf /usr/bin/python3 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
+RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple --break-system-packages
+
 COPY . /opt/modelforge
 RUN pip install --no-cache-dir --break-system-packages \
     /opt/modelforge[runtime-vision,runtime-detection] \
