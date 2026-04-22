@@ -100,3 +100,22 @@ export interface CalibrationRecord {
   error: string | null;
   created_at: string;
 }
+
+export interface TransferRecord {
+  id: number;
+  source_repo: string;
+  source_revision: string;
+  target_repo: string | null;
+  target_revision: string | null;
+  method: string;
+  classes: string[] | null;
+  n_classes: number | null;
+  n_samples: number | null;
+  after_metrics: Record<string, number | null> | null;
+  primary_metric: string | null;
+  after_value: number | null;
+  status: 'queued' | 'running' | 'previewed' | 'saving' | 'ok' | 'error';
+  duration_ms: number | null;
+  error: string | null;
+  created_at: string;
+}

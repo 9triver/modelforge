@@ -98,6 +98,29 @@ CREATE TABLE IF NOT EXISTS calibrations (
     FOREIGN KEY (source_repo_id) REFERENCES repos(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_cal_source ON calibrations(source_repo_id);
+
+-- 迁移学习记录（Phase 4b）
+CREATE TABLE IF NOT EXISTS transfers (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_repo_id      INTEGER NOT NULL,
+    source_revision     TEXT NOT NULL,
+    target_repo         TEXT,              -- fork 出的 namespace/name
+    target_revision     TEXT,              -- fork 的 commit SHA
+    method              TEXT NOT NULL,     -- 'linear_probe'
+    classes_json        TEXT,              -- JSON list of class names
+    n_classes           INTEGER,
+    n_samples           INTEGER,
+    weights_b64         TEXT,              -- base64 pickle 的 sklearn 模型
+    after_metrics_json  TEXT,
+    primary_metric      TEXT,
+    after_value         REAL,
+    status              TEXT NOT NULL,     -- queued|running|previewed|saving|ok|error
+    duration_ms         INTEGER,
+    error               TEXT,
+    created_at          TEXT NOT NULL,
+    FOREIGN KEY (source_repo_id) REFERENCES repos(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_transfer_source ON transfers(source_repo_id);
 """
 
 
@@ -172,6 +195,27 @@ class Calibration:
     after_metrics_json: str | None
     primary_metric: str | None
     before_value: float | None
+    after_value: float | None
+    status: str
+    duration_ms: int | None
+    error: str | None
+    created_at: str
+
+
+@dataclass
+class Transfer:
+    id: int
+    source_repo_id: int
+    source_revision: str
+    target_repo: str | None
+    target_revision: str | None
+    method: str
+    classes_json: str | None
+    n_classes: int | None
+    n_samples: int | None
+    weights_b64: str | None
+    after_metrics_json: str | None
+    primary_metric: str | None
     after_value: float | None
     status: str
     duration_ms: int | None
@@ -552,3 +596,75 @@ def get_calibration(cal_id: int) -> Calibration | None:
             "SELECT * FROM calibrations WHERE id = ?", (cal_id,)
         ).fetchone()
         return _row_to_calibration(row) if row else None
+
+
+# ---------- Transfers (Phase 4b) ----------
+
+def _row_to_transfer(row) -> Transfer:
+    return Transfer(
+        id=row["id"], source_repo_id=row["source_repo_id"],
+        source_revision=row["source_revision"],
+        target_repo=row["target_repo"], target_revision=row["target_revision"],
+        method=row["method"],
+        classes_json=row["classes_json"],
+        n_classes=row["n_classes"], n_samples=row["n_samples"],
+        weights_b64=row["weights_b64"],
+        after_metrics_json=row["after_metrics_json"],
+        primary_metric=row["primary_metric"], after_value=row["after_value"],
+        status=row["status"], duration_ms=row["duration_ms"],
+        error=row["error"], created_at=row["created_at"],
+    )
+
+
+def create_transfer(source_repo_id: int, source_revision: str, method: str) -> Transfer:
+    with connect() as c:
+        c.execute(
+            """INSERT INTO transfers
+               (source_repo_id, source_revision, method, status, created_at)
+               VALUES (?, ?, ?, 'queued', ?)""",
+            (source_repo_id, source_revision, method, _now()),
+        )
+        row = c.execute(
+            "SELECT * FROM transfers WHERE id = last_insert_rowid()"
+        ).fetchone()
+        return _row_to_transfer(row)
+
+
+def update_transfer(
+    transfer_id: int,
+    *,
+    status: str,
+    target_repo: str | None = None,
+    target_revision: str | None = None,
+    classes_json: str | None = None,
+    n_classes: int | None = None,
+    n_samples: int | None = None,
+    weights_b64: str | None = None,
+    after_metrics_json: str | None = None,
+    primary_metric: str | None = None,
+    after_value: float | None = None,
+    duration_ms: int | None = None,
+    error: str | None = None,
+) -> None:
+    with connect() as c:
+        c.execute(
+            """UPDATE transfers SET
+               status = ?, target_repo = ?, target_revision = ?,
+               classes_json = ?, n_classes = ?, n_samples = ?,
+               weights_b64 = ?, after_metrics_json = ?,
+               primary_metric = ?, after_value = ?,
+               duration_ms = ?, error = ?
+               WHERE id = ?""",
+            (status, target_repo, target_revision,
+             classes_json, n_classes, n_samples, weights_b64,
+             after_metrics_json, primary_metric, after_value,
+             duration_ms, error, transfer_id),
+        )
+
+
+def get_transfer(transfer_id: int) -> Transfer | None:
+    with connect() as c:
+        row = c.execute(
+            "SELECT * FROM transfers WHERE id = ?", (transfer_id,)
+        ).fetchone()
+        return _row_to_transfer(row) if row else None

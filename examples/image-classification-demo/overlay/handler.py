@@ -2,7 +2,7 @@
 
 I/O contract:
   predict(images: list[PIL.Image]) -> list[list[{label, score}]]
-  每张图返回按 score 降序的 top-k 预测。evaluator 取 top-1 比 true_label。
+  extract_features(images: list[PIL.Image]) -> np.ndarray (N, D)
 """
 from __future__ import annotations
 
@@ -40,3 +40,14 @@ class Handler(ImageClassificationHandler):
                 preds.append({"label": label, "score": round(score.item(), 4)})
             results.append(preds)
         return results
+
+    def extract_features(self, images: list[Image.Image]):
+        import numpy as np
+        feats = []
+        for img in images:
+            inputs = self.processor(images=img, return_tensors="pt").to(self.device)
+            with torch.no_grad():
+                outputs = self.model(**inputs, output_hidden_states=True)
+                cls_token = outputs.hidden_states[-1][:, 0, :]
+            feats.append(cls_token.cpu().numpy())
+        return np.concatenate(feats, axis=0)

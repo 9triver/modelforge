@@ -6,6 +6,7 @@ import type {
   Preview,
   RepoSummary,
   SearchResult,
+  TransferRecord,
 } from './types';
 
 async function getJSON<T>(url: string): Promise<T> {
@@ -107,6 +108,47 @@ export async function saveCalibration(
 
 export function getCalibration(id: number): Promise<CalibrationRecord> {
   return getJSON(`/api/v1/calibrations/${id}`);
+}
+
+export async function postTransferPreview(
+  namespace: string,
+  name: string,
+  dataset: File,
+  revision = 'main',
+  method = 'linear_probe',
+): Promise<{ transfer_id: number; status: string }> {
+  const fd = new FormData();
+  fd.append('dataset', dataset);
+  const res = await fetch(
+    `/api/v1/repos/${namespace}/${name}/transfer/preview?revision=${encodeURIComponent(revision)}&method=${encodeURIComponent(method)}`,
+    { method: 'POST', body: fd },
+  );
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`${res.status} ${res.statusText}: ${body}`);
+  }
+  return res.json();
+}
+
+export async function saveTransfer(
+  transferId: number,
+  targetNamespace: string,
+  targetName: string,
+): Promise<{ target_repo: string; target_revision: string }> {
+  const res = await fetch(`/api/v1/transfers/${transferId}/save`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target_namespace: targetNamespace, target_name: targetName }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`${res.status} ${res.statusText}: ${body}`);
+  }
+  return res.json();
+}
+
+export function getTransfer(id: number): Promise<TransferRecord> {
+  return getJSON(`/api/v1/transfers/${id}`);
 }
 
 export async function deleteRepo(

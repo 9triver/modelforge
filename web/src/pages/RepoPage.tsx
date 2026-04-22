@@ -7,16 +7,21 @@ import EvaluateTab from '../components/EvaluateTab';
 import FileList from '../components/FileList';
 import ModelIndexTable from '../components/ModelIndexTable';
 import PerformanceBadge from '../components/PerformanceBadge';
+import TransferTab from '../components/TransferTab';
 import UseModelSnippet from '../components/UseModelSnippet';
 
-type Tab = 'card' | 'files' | 'evaluate' | 'calibrate';
+type Tab = 'card' | 'files' | 'evaluate' | 'calibrate' | 'transfer';
 
 export default function RepoPage() {
   const { namespace = '', name = '' } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
   const tab: Tab =
-    tabParam === 'files' ? 'files' : tabParam === 'evaluate' ? 'evaluate' : tabParam === 'calibrate' ? 'calibrate' : 'card';
+    tabParam === 'files' ? 'files' :
+    tabParam === 'evaluate' ? 'evaluate' :
+    tabParam === 'calibrate' ? 'calibrate' :
+    tabParam === 'transfer' ? 'transfer' :
+    'card';
   const revision = searchParams.get('revision') || 'main';
 
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -68,7 +73,7 @@ export default function RepoPage() {
         </div>
 
         <div className="border-b border-gray-200 mb-4 flex gap-1">
-          {(['card', 'files', 'evaluate', 'calibrate'] as const).map((t) => (
+          {(['card', 'files', 'evaluate', 'calibrate', 'transfer'] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -84,7 +89,9 @@ export default function RepoPage() {
                 ? `Files (${preview.files.length})`
                 : t === 'evaluate'
                 ? 'Evaluate'
-                : 'Calibrate'}
+                : t === 'calibrate'
+                ? 'Calibrate'
+                : 'Transfer'}
             </button>
           ))}
         </div>
@@ -138,6 +145,15 @@ export default function RepoPage() {
 
         {tab === 'calibrate' && (
           <CalibrateTab
+            namespace={namespace}
+            name={name}
+            revision={revision}
+            task={meta.pipeline_tag || null}
+          />
+        )}
+
+        {tab === 'transfer' && (
+          <TransferTab
             namespace={namespace}
             name={name}
             revision={revision}
