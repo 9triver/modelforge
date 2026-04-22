@@ -68,25 +68,35 @@ export function getEvaluation(id: number): Promise<Evaluation> {
   return getJSON(`/api/v1/evaluations/${id}`);
 }
 
-export async function postCalibration(
+export async function postCalibrationPreview(
   namespace: string,
   name: string,
   dataset: File,
-  targetNamespace: string,
-  targetName: string,
   revision = 'main',
 ): Promise<{ calibration_id: number; status: string }> {
   const fd = new FormData();
   fd.append('dataset', dataset);
-  const qs = new URLSearchParams({
-    revision,
-    target_namespace: targetNamespace,
-    target_name: targetName,
-  });
   const res = await fetch(
-    `/api/v1/repos/${namespace}/${name}/calibrate?${qs}`,
+    `/api/v1/repos/${namespace}/${name}/calibrate/preview?revision=${encodeURIComponent(revision)}`,
     { method: 'POST', body: fd },
   );
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`${res.status} ${res.statusText}: ${body}`);
+  }
+  return res.json();
+}
+
+export async function saveCalibration(
+  calId: number,
+  targetNamespace: string,
+  targetName: string,
+): Promise<{ target_repo: string; target_revision: string }> {
+  const res = await fetch(`/api/v1/calibrations/${calId}/save`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target_namespace: targetNamespace, target_name: targetName }),
+  });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`${res.status} ${res.statusText}: ${body}`);

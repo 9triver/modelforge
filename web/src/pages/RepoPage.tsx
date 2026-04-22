@@ -127,6 +127,7 @@ export default function RepoPage() {
               loadAgg();
               setTab('card');
             }}
+            onCalibrate={() => setTab('calibrate')}
           />
         )}
 

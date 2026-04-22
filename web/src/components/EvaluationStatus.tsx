@@ -25,10 +25,12 @@ export default function EvaluationStatus({
   evalRec,
   onReset,
   onViewPerformance,
+  onCalibrate,
 }: {
   evalRec: Evaluation;
   onReset: () => void;
   onViewPerformance: () => void;
+  onCalibrate?: () => void;
 }) {
   const { id, status, metrics, primary_metric, duration_ms, error } = evalRec;
 
@@ -97,6 +99,14 @@ export default function EvaluationStatus({
             className="text-sm text-blue-600 hover:underline"
           >
             View updated performance →
+          </button>
+        )}
+        {status === 'ok' && onCalibrate && (
+          <button
+            onClick={onCalibrate}
+            className="text-sm text-amber-600 hover:underline"
+          >
+            指标不理想？试试校准 →
           </button>
         )}
       </div>

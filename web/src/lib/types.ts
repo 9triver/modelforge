@@ -95,7 +95,7 @@ export interface CalibrationRecord {
   primary_metric: string | null;
   before_value: number | null;
   after_value: number | null;
-  status: 'queued' | 'running' | 'ok' | 'error';
+  status: 'queued' | 'running' | 'previewed' | 'saving' | 'ok' | 'error';
   duration_ms: number | null;
   error: string | null;
   created_at: string;

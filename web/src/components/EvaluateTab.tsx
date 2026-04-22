@@ -22,9 +22,10 @@ type Props = {
   revision: string;
   task: string | null;
   onDone: () => void;
+  onCalibrate?: () => void;
 };
 
-export default function EvaluateTab({ namespace, name, revision, task, onDone }: Props) {
+export default function EvaluateTab({ namespace, name, revision, task, onDone, onCalibrate }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [evalRec, setEvalRec] = useState<Evaluation | null>(null);
@@ -110,6 +111,7 @@ export default function EvaluateTab({ namespace, name, revision, task, onDone }:
         evalRec={evalRec}
         onReset={reset}
         onViewPerformance={onDone}
+        onCalibrate={onCalibrate}
       />
     );
   }
