@@ -24,7 +24,6 @@ from ..runtime.calibration import (
     compute_data_hash,
     generate_calibrated_repo,
 )
-from ..runtime.evaluator import load_handler
 from ..schema import validate_model_card
 
 router = APIRouter(prefix="/api/v1", tags=["calibrations"])
@@ -97,13 +96,12 @@ def _run_preview(
         ds_path = workdir / dataset_name
         ds_path.write_bytes(dataset_bytes)
 
-        from ..runtime.datasets import forecasting as fc_ds
-        cal_df = fc_ds.load_forecasting_csv(ds_path, target_col=target_col)
+        from ..runtime.backend import run_calibration
 
-        handler = load_handler(model_dir, "time-series-forecasting")
-        handler.warmup()
-
-        result = calibrate_by_method(method, handler, cal_df, target_col)
+        result = run_calibration(
+            model_dir, ds_path, metadata,
+            method=method, target_col=target_col,
+        )
         if result.status != "ok":
             db.update_calibration(
                 cal_id, status="error", error=result.error,

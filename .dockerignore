@@ -1,0 +1,20 @@
+# Keep Docker build context lean — exclude things that shouldn't ship in the image.
+.git
+.github
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.ruff_cache
+node_modules
+web/node_modules
+web/dist
+tests
+examples
+deploy
+docs
+docker
+*.md
+.DS_Store

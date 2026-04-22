@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     # 单文件 LFS 上传上限（字节）
     lfs_max_object_size: int = 10 * 1024 * 1024 * 1024  # 10 GB
 
+    # Evaluator backend: "inprocess"（默认，无隔离）或 "docker"（容器沙箱）
+    eval_backend: str = "inprocess"
+    docker_image_prefix: str = "modelforge-runtime"
+    docker_memory: str = "8g"
+    docker_cpus: int = 4
+    docker_timeout: int = 300
+    docker_gpu: bool = False
+
     # ===== 派生路径（基于 data_dir）=====
     @property
     def repos_dir(self) -> Path:

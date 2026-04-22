@@ -8,7 +8,15 @@
 """
 from __future__ import annotations
 
+from .backend import run_calibration, run_evaluation
 from .evaluator import EvaluationResult, evaluate, load_handler
 from .tasks.base import TaskHandler
 
-__all__ = ["TaskHandler", "evaluate", "load_handler", "EvaluationResult"]
+__all__ = [
+    "TaskHandler",
+    "evaluate",
+    "load_handler",
+    "EvaluationResult",
+    "run_evaluation",
+    "run_calibration",
+]

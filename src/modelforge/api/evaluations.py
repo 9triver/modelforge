@@ -70,8 +70,8 @@ def _run_evaluation(
     dataset_bytes: bytes,
     dataset_name: str,
 ) -> None:
-    """后台 worker：checkout 仓库 + 落盘数据 + 跑 in-process evaluator。"""
-    from ..runtime import evaluate
+    """后台 worker：checkout 仓库 + 落盘数据 + 跑 evaluator backend。"""
+    from ..runtime.backend import run_evaluation
 
     db.update_evaluation(eval_id, status="running")
 
@@ -87,7 +87,7 @@ def _run_evaluation(
         readme = (model_dir / "README.md").read_text()
         metadata = validate_model_card(readme)
 
-        result = evaluate(model_dir, ds_path, metadata)
+        result = run_evaluation(model_dir, ds_path, metadata)
 
         db.update_evaluation(
             eval_id,
