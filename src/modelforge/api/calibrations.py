@@ -148,11 +148,9 @@ def _do_fork(
     workdir = Path(tempfile.mkdtemp(prefix="mf_fork_"))
 
     try:
+        # fork 时不实化 LFS — 保留指针文件，LFS 对象在共享 store 里可直接复用
         model_dir = workdir / "model"
         repo_reader.checkout_to_dir(namespace, name, revision, model_dir)
-        repo_reader.materialize_lfs(model_dir)
-
-        from ..runtime.calibration import CalibrationResult
         result = CalibrationResult(
             params=params,
             before_metrics=before_metrics,

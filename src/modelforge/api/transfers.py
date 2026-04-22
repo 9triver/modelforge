@@ -147,9 +147,10 @@ def _do_transfer_fork(
     workdir = Path(tempfile.mkdtemp(prefix="mf_tfork_"))
 
     try:
+        # fork 时不实化 LFS — 保留指针文件，避免推送几百 MB 大文件
+        # LFS 对象已在共享 store 里，OID 相同可直接复用
         model_dir = workdir / "model"
         repo_reader.checkout_to_dir(namespace, name, revision, model_dir)
-        repo_reader.materialize_lfs(model_dir)
 
         result = TransferResult(
             method=result_data["method"],
