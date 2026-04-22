@@ -10,6 +10,14 @@ function fmt(v: number | null | undefined): string {
   return v.toFixed(4);
 }
 
+const ALL_METHODS = [
+  { id: 'linear_bias', label: 'Linear Bias', desc: '全局 y = a·pred + b' },
+  { id: 'segmented', label: 'Segmented', desc: '按时段分 4 段，各自 (a, b)' },
+  { id: 'stacking', label: 'Stacking', desc: 'GBR 残差模型（需要 sklearn）' },
+] as const;
+
+type MethodId = (typeof ALL_METHODS)[number]['id'];
+
 const STATUS_COLOR: Record<string, string> = {
   queued: 'bg-gray-100 text-gray-700',
   running: 'bg-amber-100 text-amber-800',
@@ -17,15 +25,6 @@ const STATUS_COLOR: Record<string, string> = {
   saving: 'bg-amber-100 text-amber-800',
   ok: 'bg-green-100 text-green-800',
   error: 'bg-red-100 text-red-800',
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  queued: 'queued',
-  running: 'running',
-  previewed: 'preview ready',
-  saving: 'saving...',
-  ok: 'saved',
-  error: 'failed',
 };
 
 type Props = {
@@ -39,15 +38,19 @@ export default function CalibrateTab({ namespace, name, revision, task }: Props)
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [calRec, setCalRec] = useState<CalibrationRecord | null>(null);
+
+  // multi-method preview results
+  const [results, setResults] = useState<Map<MethodId, CalibrationRecord>>(new Map());
+  const [selected, setSelected] = useState<MethodId | null>(null);
 
   // save phase
   const [targetNs, setTargetNs] = useState('');
   const [targetName, setTargetName] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [savedRec, setSavedRec] = useState<CalibrationRecord | null>(null);
 
-  const pollRef = useRef<number | null>(null);
+  const pollRefs = useRef<Map<number, number>>(new Map());
 
   useEffect(() => {
     setTargetNs(namespace);
@@ -55,7 +58,7 @@ export default function CalibrateTab({ namespace, name, revision, task }: Props)
   }, [namespace, name]);
 
   useEffect(() => {
-    return () => { if (pollRef.current != null) clearInterval(pollRef.current); };
+    return () => { pollRefs.current.forEach((t) => clearInterval(t)); };
   }, []);
 
   if (task !== 'time-series-forecasting') {
@@ -66,28 +69,36 @@ export default function CalibrateTab({ namespace, name, revision, task }: Props)
     );
   }
 
-  const startPolling = (id: number, until: string[]) => {
-    if (pollRef.current != null) clearInterval(pollRef.current);
-    pollRef.current = window.setInterval(async () => {
+  const pollOne = (id: number, method: MethodId) => {
+    const t = window.setInterval(async () => {
       try {
         const rec = await getCalibration(id);
-        setCalRec(rec);
-        if (until.includes(rec.status)) {
-          if (pollRef.current != null) { clearInterval(pollRef.current); pollRef.current = null; }
+        setResults((prev) => new Map(prev).set(method, rec));
+        if (rec.status === 'previewed' || rec.status === 'error') {
+          clearInterval(t);
+          pollRefs.current.delete(id);
         }
       } catch { /* retry */ }
     }, 1000);
+    pollRefs.current.set(id, t);
   };
 
-  const runPreview = async () => {
+  const runPreviewAll = async () => {
     if (!file) return;
     setSubmitError(null);
     setSubmitting(true);
+    setResults(new Map());
+    setSelected(null);
+    setSavedRec(null);
     try {
-      const { calibration_id } = await postCalibrationPreview(namespace, name, file, revision);
-      const rec = await getCalibration(calibration_id);
-      setCalRec(rec);
-      startPolling(calibration_id, ['previewed', 'error']);
+      for (const m of ALL_METHODS) {
+        const { calibration_id } = await postCalibrationPreview(
+          namespace, name, file, revision, m.id,
+        );
+        const rec = await getCalibration(calibration_id);
+        setResults((prev) => new Map(prev).set(m.id, rec));
+        pollOne(calibration_id, m.id);
+      }
     } catch (e: any) {
       setSubmitError(e.message || String(e));
     } finally {
@@ -96,107 +107,158 @@ export default function CalibrateTab({ namespace, name, revision, task }: Props)
   };
 
   const doSave = async () => {
-    if (!calRec || !targetNs || !targetName) return;
+    if (!selected || !targetNs || !targetName) return;
+    const rec = results.get(selected);
+    if (!rec) return;
     setSaveError(null);
     setSaving(true);
     try {
-      await saveCalibration(calRec.id, targetNs, targetName);
-      startPolling(calRec.id, ['ok', 'error']);
+      await saveCalibration(rec.id, targetNs, targetName);
+      const pollSave = window.setInterval(async () => {
+        const r = await getCalibration(rec.id);
+        if (r.status === 'ok' || r.status === 'error') {
+          clearInterval(pollSave);
+          setSavedRec(r);
+          setSaving(false);
+        }
+      }, 1000);
     } catch (e: any) {
       setSaveError(e.message || String(e));
-    } finally {
       setSaving(false);
     }
   };
 
   const reset = () => {
-    if (pollRef.current != null) { clearInterval(pollRef.current); pollRef.current = null; }
-    setCalRec(null);
+    pollRefs.current.forEach((t) => clearInterval(t));
+    pollRefs.current.clear();
+    setResults(new Map());
+    setSelected(null);
     setFile(null);
     setSubmitError(null);
     setSaveError(null);
+    setSavedRec(null);
   };
 
-  // ---------- result / status view ----------
-  if (calRec) {
-    const { id, status, method, params, before_metrics, after_metrics,
-            primary_metric, target_repo, duration_ms, error } = calRec;
+  const allDone = results.size === ALL_METHODS.length &&
+    [...results.values()].every((r) => r.status === 'previewed' || r.status === 'error');
+  const anyRunning = [...results.values()].some((r) => r.status === 'queued' || r.status === 'running');
+  const beforeMetrics = [...results.values()].find((r) => r.before_metrics)?.before_metrics;
 
+  // ---------- saved view ----------
+  if (savedRec && savedRec.status === 'ok' && savedRec.target_repo) {
     return (
-      <div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
-          <div className="font-medium">Calibration #{id}</div>
-          <span className={`text-xs font-semibold px-2 py-0.5 rounded ${STATUS_COLOR[status] || ''}`}>
-            {STATUS_LABEL[status] || status}
-          </span>
+      <div className="border border-green-200 rounded-lg bg-white p-4 space-y-3">
+        <div className="text-green-700 font-medium">校准模型已保存</div>
+        <div className="text-sm">
+          方法: <code className="bg-gray-100 px-1 rounded">{savedRec.method}</code>
         </div>
+        <div className="text-sm">
+          已保存到 <a href={`/${savedRec.target_repo}`} className="text-blue-600 hover:underline font-medium">{savedRec.target_repo}</a>
+        </div>
+        <button onClick={reset} className="px-3 py-1.5 text-sm border border-gray-300 rounded hover:bg-gray-50">
+          Run another
+        </button>
+      </div>
+    );
+  }
 
-        <div className="p-4 space-y-3">
-          {(status === 'queued' || status === 'running') && (
-            <div className="text-sm text-gray-600 flex items-center gap-2">
-              <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-              {status === 'queued' ? '排队中…' : '正在校准…'}
+  // ---------- compare view ----------
+  if (results.size > 0) {
+    return (
+      <div className="space-y-4">
+        {anyRunning && (
+          <div className="text-sm text-gray-600 flex items-center gap-2">
+            <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+            正在校准…
+          </div>
+        )}
+
+        <table className="w-full text-sm border border-gray-200 rounded overflow-hidden">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-3 py-2 text-left text-xs text-gray-500 w-8"></th>
+              <th className="px-3 py-2 text-left text-xs text-gray-500">Method</th>
+              <th className="px-3 py-2 text-right text-xs text-gray-500">Before MAPE</th>
+              <th className="px-3 py-2 text-right text-xs text-gray-500">After MAPE</th>
+              <th className="px-3 py-2 text-right text-xs text-gray-500">After RMSE</th>
+              <th className="px-3 py-2 text-right text-xs text-gray-500">After MAE</th>
+              <th className="px-3 py-2 text-center text-xs text-gray-500">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ALL_METHODS.map((m) => {
+              const rec = results.get(m.id);
+              const isPreviewed = rec?.status === 'previewed';
+              return (
+                <tr
+                  key={m.id}
+                  className={`border-t border-gray-200 cursor-pointer ${
+                    selected === m.id ? 'bg-blue-50' : 'hover:bg-gray-50'
+                  }`}
+                  onClick={() => isPreviewed && setSelected(m.id)}
+                >
+                  <td className="px-3 py-2 text-center">
+                    {isPreviewed && (
+                      <input
+                        type="radio"
+                        name="cal-method"
+                        checked={selected === m.id}
+                        onChange={() => setSelected(m.id)}
+                        className="accent-blue-600"
+                      />
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="font-medium">{m.label}</div>
+                    <div className="text-xs text-gray-500">{m.desc}</div>
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono">
+                    {fmt(rec?.before_value ?? beforeMetrics?.mape)}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono font-semibold">
+                    {isPreviewed ? fmt(rec?.after_value) : '—'}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono">
+                    {isPreviewed ? fmt(rec?.after_metrics?.rmse) : '—'}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono">
+                    {isPreviewed ? fmt(rec?.after_metrics?.mae) : '—'}
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    {rec ? (
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${STATUS_COLOR[rec.status] || ''}`}>
+                        {rec.status === 'previewed' ? 'ready' : rec.status}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-400">—</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+
+        {allDone && selected && (
+          <div className="border-t border-gray-200 pt-3 space-y-3">
+            <div className="text-sm font-medium text-gray-700">
+              选择了 <code className="bg-gray-100 px-1 rounded">{selected}</code>，保存为新模型
             </div>
-          )}
-
-          {status === 'saving' && (
-            <div className="text-sm text-gray-600 flex items-center gap-2">
-              <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-              正在创建 fork 仓库…
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-gray-500">Fork to:</span>
+              <input
+                value={targetNs}
+                onChange={(e) => setTargetNs(e.target.value)}
+                className="border border-gray-300 rounded px-2 py-1 w-32 text-sm"
+              />
+              <span className="text-gray-400">/</span>
+              <input
+                value={targetName}
+                onChange={(e) => setTargetName(e.target.value)}
+                className="border border-gray-300 rounded px-2 py-1 w-64 text-sm"
+              />
             </div>
-          )}
-
-          {/* previewed or ok: show before/after table */}
-          {(status === 'previewed' || status === 'ok') && before_metrics && after_metrics && (
-            <>
-              <div className="text-sm text-gray-600">
-                Method: <code className="bg-gray-100 px-1 rounded">{method}</code>
-                {params && <span className="ml-2">a={params.a}, b={fmt(params.b)}</span>}
-              </div>
-              <table className="w-full text-sm border border-gray-200 rounded">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-3 py-2 text-left text-xs text-gray-500">Metric</th>
-                    <th className="px-3 py-2 text-right text-xs text-gray-500">Before</th>
-                    <th className="px-3 py-2 text-right text-xs text-gray-500">After</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.keys(before_metrics).map((k) => (
-                    <tr key={k} className={k === primary_metric ? 'bg-blue-50 font-semibold' : ''}>
-                      <td className="px-3 py-1.5 text-gray-600 uppercase text-xs">{k}</td>
-                      <td className="px-3 py-1.5 text-right font-mono">{fmt(before_metrics[k])}</td>
-                      <td className="px-3 py-1.5 text-right font-mono">{fmt(after_metrics[k])}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {duration_ms != null && (
-                <div className="text-xs text-gray-500">Duration: {(duration_ms / 1000).toFixed(2)}s</div>
-              )}
-            </>
-          )}
-
-          {/* previewed: show save form */}
-          {status === 'previewed' && (
-            <div className="border-t border-gray-200 pt-3 mt-3 space-y-3">
-              <div className="text-sm font-medium text-gray-700">满意？保存为新模型</div>
-              <div className="flex items-center gap-2 text-sm">
-                <span className="text-gray-500">Fork to:</span>
-                <input
-                  value={targetNs}
-                  onChange={(e) => setTargetNs(e.target.value)}
-                  className="border border-gray-300 rounded px-2 py-1 w-32 text-sm"
-                  placeholder="namespace"
-                />
-                <span className="text-gray-400">/</span>
-                <input
-                  value={targetName}
-                  onChange={(e) => setTargetName(e.target.value)}
-                  className="border border-gray-300 rounded px-2 py-1 w-64 text-sm"
-                  placeholder="name"
-                />
-              </div>
+            <div className="flex gap-2">
               <button
                 disabled={!targetNs || !targetName || saving}
                 onClick={doSave}
@@ -204,36 +266,22 @@ export default function CalibrateTab({ namespace, name, revision, task }: Props)
               >
                 {saving ? '保存中…' : 'Save as new model'}
               </button>
-              {saveError && (
-                <pre className="bg-red-50 text-red-800 p-2 rounded text-xs">{saveError}</pre>
-              )}
+              <button onClick={reset} className="px-3 py-1.5 text-sm border border-gray-300 rounded hover:bg-gray-50">
+                Start over
+              </button>
             </div>
-          )}
+            {saveError && <pre className="bg-red-50 text-red-800 p-2 rounded text-xs">{saveError}</pre>}
+          </div>
+        )}
 
-          {/* ok: show fork link */}
-          {status === 'ok' && target_repo && (
-            <div className="border-t border-gray-200 pt-3 mt-3">
-              <div className="text-sm text-green-700 font-medium">
-                已保存到 <a href={`/${target_repo}`} className="text-blue-600 hover:underline">{target_repo}</a>
-              </div>
-            </div>
-          )}
-
-          {status === 'error' && (
-            <pre className="bg-red-50 text-red-800 p-3 rounded text-xs whitespace-pre-wrap break-words">
-              {error || 'unknown error'}
-            </pre>
-          )}
-        </div>
-
-        <div className="px-4 py-3 bg-gray-50 border-t border-gray-200">
-          <button
-            onClick={reset}
-            className="px-3 py-1.5 text-sm border border-gray-300 rounded hover:bg-white"
-          >
-            {status === 'ok' ? 'Run another' : status === 'error' ? 'Try again' : 'Start over'}
-          </button>
-        </div>
+        {allDone && !selected && (
+          <div className="flex gap-2">
+            <div className="text-sm text-gray-500">选择一个方法后可保存为新模型</div>
+            <button onClick={reset} className="px-3 py-1.5 text-sm border border-gray-300 rounded hover:bg-gray-50">
+              Start over
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -242,7 +290,7 @@ export default function CalibrateTab({ namespace, name, revision, task }: Props)
   return (
     <div className="space-y-4">
       <div className="text-sm text-gray-600">
-        上传目标区域数据，预览校准效果。满意后再保存为新模型。
+        上传目标区域数据，同时预览三种校准方法的效果，选最好的保存为新模型。
       </div>
       <DatasetUpload
         onFile={setFile}
@@ -255,10 +303,10 @@ export default function CalibrateTab({ namespace, name, revision, task }: Props)
         </span>
         <button
           disabled={!file || submitting}
-          onClick={runPreview}
+          onClick={runPreviewAll}
           className="px-4 py-2 rounded bg-blue-600 text-white text-sm font-medium disabled:bg-gray-300"
         >
-          {submitting ? '提交中…' : 'Preview calibration'}
+          {submitting ? '提交中…' : 'Preview all methods'}
         </button>
       </div>
       {submitError && (

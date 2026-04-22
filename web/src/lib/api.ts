@@ -73,11 +73,12 @@ export async function postCalibrationPreview(
   name: string,
   dataset: File,
   revision = 'main',
+  method = 'linear_bias',
 ): Promise<{ calibration_id: number; status: string }> {
   const fd = new FormData();
   fd.append('dataset', dataset);
   const res = await fetch(
-    `/api/v1/repos/${namespace}/${name}/calibrate/preview?revision=${encodeURIComponent(revision)}`,
+    `/api/v1/repos/${namespace}/${name}/calibrate/preview?revision=${encodeURIComponent(revision)}&method=${encodeURIComponent(method)}`,
     { method: 'POST', body: fd },
   );
   if (!res.ok) {

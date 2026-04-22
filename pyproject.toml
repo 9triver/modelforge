@@ -38,6 +38,9 @@ runtime-detection = [
     "Pillow>=10.0",
     "pycocotools>=2.0",
 ]
+runtime-calibration = [
+    "scikit-learn>=1.4",
+]
 
 [project.scripts]
 modelforge = "modelforge.cli:app"

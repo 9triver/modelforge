@@ -18,6 +18,8 @@ from pydantic import BaseModel
 
 from .. import db, repo_reader, storage
 from ..runtime.calibration import (
+    CalibrationResult,
+    calibrate_by_method,
     calibrate_forecasting,
     compute_data_hash,
     generate_calibrated_repo,
@@ -73,6 +75,7 @@ def _run_preview(
     revision: str,
     dataset_bytes: bytes,
     dataset_name: str,
+    method: str,
 ) -> None:
     """后台 worker：checkout → calibrate → 只存指标，不建仓库。"""
     db.update_calibration(cal_id, status="running")
@@ -100,7 +103,7 @@ def _run_preview(
         handler = load_handler(model_dir, "time-series-forecasting")
         handler.warmup()
 
-        result = calibrate_forecasting(handler, cal_df, target_col)
+        result = calibrate_by_method(method, handler, cal_df, target_col)
         if result.status != "ok":
             db.update_calibration(
                 cal_id, status="error", error=result.error,
@@ -238,6 +241,7 @@ async def preview_calibration(
     bg: BackgroundTasks,
     dataset: UploadFile,
     revision: str = Query("main"),
+    method: str = Query("linear_bias", description="校准方法：linear_bias / segmented / stacking"),
 ):
     """预览校准效果。不创建任何仓库，只返回 before/after 指标。"""
     repo = db.get_repo(namespace, name)
@@ -250,8 +254,8 @@ async def preview_calibration(
 
     payload = await dataset.read()
     ds_name = Path(dataset.filename or "data.csv").name
-    record = db.create_calibration(repo.id, sha, "linear_bias")
-    bg.add_task(_run_preview, record.id, namespace, name, sha, payload, ds_name)
+    record = db.create_calibration(repo.id, sha, method)
+    bg.add_task(_run_preview, record.id, namespace, name, sha, payload, ds_name, method)
     return CalibrationCreated(calibration_id=record.id, status="queued")
 
 
