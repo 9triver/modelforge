@@ -3,6 +3,8 @@ const SNIPPETS: Record<string, (repo: string) => string> = {
     `import modelforge\n\nhandler = modelforge.load("${repo}")\npred_df = handler.predict(df)  # DataFrame with timestamp + prediction`,
   'image-classification': (repo) =>
     `import modelforge\nfrom PIL import Image\n\nhandler = modelforge.load("${repo}")\nresults = handler.predict([Image.open("cat.jpg")])\n# [[{"label": "cat", "score": 0.97}, ...]]`,
+  'object-detection': (repo) =>
+    `import modelforge\nfrom PIL import Image\n\nhandler = modelforge.load("${repo}")\nresults = handler.predict([Image.open("photo.jpg")])\n# [[{"label": "person", "bbox": [x,y,w,h], "score": 0.95}, ...]]`,
 };
 
 const CLI_SNIPPETS: Record<string, (repo: string) => string> = {
@@ -10,6 +12,8 @@ const CLI_SNIPPETS: Record<string, (repo: string) => string> = {
     `modelforge run ${repo} --input data.csv --output pred.csv`,
   'image-classification': (repo) =>
     `modelforge run ${repo} --input images/ --output results.json`,
+  'object-detection': (repo) =>
+    `modelforge run ${repo} --input images/ --output detections.json`,
 };
 
 export default function UseModelSnippet({

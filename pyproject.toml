@@ -34,6 +34,10 @@ runtime-timeseries = [
 runtime-vision = [
     "Pillow>=10.0",
 ]
+runtime-detection = [
+    "Pillow>=10.0",
+    "pycocotools>=2.0",
+]
 
 [project.scripts]
 modelforge = "modelforge.cli:app"

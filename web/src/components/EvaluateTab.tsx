@@ -11,6 +11,9 @@ const SUPPORTED: Record<string, { hint: string }> = {
   'image-classification': {
     hint: 'ZIP — ImageFolder 结构（每个类别一个子目录，子目录里放图片）',
   },
+  'object-detection': {
+    hint: 'ZIP — 含 images/ 目录 + annotations.json（COCO 格式）',
+  },
 };
 
 type Props = {

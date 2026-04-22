@@ -239,6 +239,44 @@ def run(
         else:
             for r in results:
                 console.print(f"  {r['file']}: {r['label']} ({r['score']:.4f})")
+
+    elif task == "object-detection":
+        from PIL import Image as PILImage
+        images = []
+        paths = []
+        if input_path.is_dir():
+            for p in sorted(input_path.rglob("*")):
+                if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}:
+                    images.append(PILImage.open(p).convert("RGB"))
+                    paths.append(str(p))
+        else:
+            images.append(PILImage.open(input_path).convert("RGB"))
+            paths.append(str(input_path))
+
+        if not images:
+            console.print("[red]未找到图片[/red]")
+            raise typer.Exit(1)
+
+        preds = handler.predict(images)
+        results = []
+        for path, dets in zip(paths, preds):
+            for d in dets:
+                results.append({
+                    "file": path,
+                    "label": d["label"],
+                    "bbox": d["bbox"],
+                    "score": d["score"],
+                })
+
+        if output:
+            Path(output).write_text(json.dumps(results, indent=2, ensure_ascii=False))
+            console.print(f"[green]✓ 写入 {output}[/green] ({len(results)} 个检测)")
+        else:
+            for r in results:
+                console.print(
+                    f"  {r['file']}: {r['label']} ({r['score']:.4f}) "
+                    f"bbox={[round(v,1) for v in r['bbox']]}"
+                )
     else:
         console.print(f"[red]task '{task}' 的 CLI run 尚未支持[/red]")
         raise typer.Exit(1)

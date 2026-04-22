@@ -158,9 +158,39 @@ def _eval_image_classification(
     return metrics, primary, metrics.get(primary)
 
 
+def _eval_object_detection(
+    handler: TaskHandler,
+    dataset_path: str | Path,
+    metadata: ModelCardMetadata,
+) -> tuple[dict, str, float | None]:
+    from .datasets import object_detection as od_ds
+    from .metrics import object_detection as od_metrics
+
+    p = Path(dataset_path)
+    if p.suffix.lower() == ".zip":
+        import tempfile
+        tmp = Path(tempfile.mkdtemp(prefix="mf_eval_"))
+        root = od_ds.unpack_zip(p, tmp)
+    else:
+        root = p
+
+    images, image_ids, coco_dict = od_ds.load_coco_dataset(root)
+    predictions = handler.predict(images)
+
+    if len(predictions) != len(images):
+        raise ValueError(
+            f"handler 返回 {len(predictions)} 条预测，与输入 {len(images)} 张图不匹配"
+        )
+
+    metrics = od_metrics.compute_all(coco_dict, predictions, image_ids)
+    primary = "mAP"
+    return metrics, primary, metrics.get(primary)
+
+
 _DISPATCH = {
     "time-series-forecasting": _eval_forecasting,
     "image-classification": _eval_image_classification,
+    "object-detection": _eval_object_detection,
 }
 
 
