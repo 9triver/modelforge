@@ -13,7 +13,7 @@ RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ \
 
 COPY . /opt/modelforge
 COPY wheels/ /tmp/wheels/
-RUN pip install --no-cache-dir --break-system-packages /tmp/wheels/*.whl \
+RUN pip install --no-cache-dir --break-system-packages --no-deps /tmp/wheels/*.whl \
  && pip install --no-cache-dir --break-system-packages \
     /opt/modelforge[runtime-vision,runtime-detection] transformers ultralytics \
  && rm -rf /tmp/wheels
