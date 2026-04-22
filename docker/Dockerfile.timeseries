@@ -9,7 +9,8 @@ RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ \
 
 COPY . /opt/modelforge
 RUN pip install --no-cache-dir torch torchvision --index-url https://mirror.sjtu.edu.cn/pytorch-wheels/cpu \
- && pip install --no-cache-dir /opt/modelforge[runtime-timeseries,runtime-calibration]
+ && pip install --no-cache-dir /opt/modelforge[runtime-timeseries,runtime-calibration] \
+ && pip install --no-cache-dir transformers chronos-forecasting
 
 WORKDIR /workspace
 ENTRYPOINT ["python", "-m", "modelforge.runtime.sandbox_entry"]
