@@ -17,17 +17,20 @@ COPY wheels/ /tmp/wheels/
 # torch/torchvision 从本地 wheel 装（--no-deps 跳过 CUDA 依赖，镜像已自带）
 RUN pip install --no-cache-dir --break-system-packages --no-deps /tmp/wheels/*.whl
 
-# 用 constraint 文件阻止 pip 下载任何 nvidia-* / triton 包（镜像已有 CUDA runtime）
-RUN printf '%s\n' \
-    'nvidia-cublas-cu12' 'nvidia-cuda-cupti-cu12' 'nvidia-cuda-nvrtc-cu12' \
-    'nvidia-cuda-runtime-cu12' 'nvidia-cudnn-cu12' 'nvidia-cufft-cu12' \
-    'nvidia-curand-cu12' 'nvidia-cusolver-cu12' 'nvidia-cusparse-cu12' \
-    'nvidia-nccl-cu12' 'nvidia-nvjitlink-cu12' 'nvidia-nvtx-cu12' 'triton' \
-    | sed 's/$/==0.0.0/' > /tmp/skip-nvidia.txt \
+# 生成 constraint 文件：钉住 torch 版本 + 屏蔽 nvidia-*/triton
+RUN python3 -c "\
+import torch; v=torch.__version__; \
+lines=[f'torch=={v}']; \
+[lines.append(f'{p}==0.0.0') for p in [ \
+  'nvidia-cublas-cu12','nvidia-cuda-cupti-cu12','nvidia-cuda-nvrtc-cu12', \
+  'nvidia-cuda-runtime-cu12','nvidia-cudnn-cu12','nvidia-cufft-cu12', \
+  'nvidia-curand-cu12','nvidia-cusolver-cu12','nvidia-cusparse-cu12', \
+  'nvidia-nccl-cu12','nvidia-nvjitlink-cu12','nvidia-nvtx-cu12','triton']]; \
+open('/tmp/constraints.txt','w').write('\n'.join(lines))" \
  && pip install --no-cache-dir --break-system-packages \
-    -c /tmp/skip-nvidia.txt \
+    -c /tmp/constraints.txt \
     /opt/modelforge[runtime-vision,runtime-detection] transformers ultralytics \
- && rm -rf /tmp/wheels /tmp/skip-nvidia.txt
+ && rm -rf /tmp/wheels /tmp/constraints.txt
 
 WORKDIR /workspace
 ENTRYPOINT ["python", "-m", "modelforge.runtime.sandbox_entry"]
