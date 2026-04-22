@@ -152,3 +152,13 @@ def delete_repo(namespace: str, name: str, user: db.User = Depends(require_user)
         raise HTTPException(403, "Only the owner can delete this repository")
     db.delete_repo(namespace, name)
     storage.delete_bare_repo(namespace, name)
+
+
+@router.delete("/{namespace}/{name}/force", status_code=status.HTTP_204_NO_CONTENT)
+def force_delete_repo(namespace: str, name: str):
+    """无认证删除（内网简化）。前端确认后直接调用。"""
+    repo = db.get_repo(namespace, name)
+    if not repo:
+        raise HTTPException(404, f"Repository '{namespace}/{name}' not found")
+    db.delete_repo(namespace, name)
+    storage.delete_bare_repo(namespace, name)

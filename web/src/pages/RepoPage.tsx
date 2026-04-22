@@ -25,7 +25,6 @@ export default function RepoPage() {
   const [loading, setLoading] = useState(true);
 
   const [showDelete, setShowDelete] = useState(false);
-  const [deleteToken, setDeleteToken] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -212,24 +211,17 @@ export default function RepoPage() {
               <div className="text-xs text-red-700 font-semibold">
                 确认删除 {preview.full_name}？此操作不可撤销。
               </div>
-              <input
-                type="password"
-                value={deleteToken}
-                onChange={(e) => setDeleteToken(e.target.value)}
-                placeholder="输入 Token 确认"
-                className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
-              />
               {deleteError && (
                 <div className="text-xs text-red-600">{deleteError}</div>
               )}
               <div className="flex gap-2">
                 <button
-                  disabled={!deleteToken || deleting}
+                  disabled={deleting}
                   onClick={async () => {
                     setDeleting(true);
                     setDeleteError(null);
                     try {
-                      await deleteRepo(namespace, name, deleteToken);
+                      await deleteRepo(namespace, name);
                       navigate('/');
                     } catch (e: any) {
                       setDeleteError(e.message || String(e));
@@ -242,7 +234,7 @@ export default function RepoPage() {
                   {deleting ? '删除中…' : '确认删除'}
                 </button>
                 <button
-                  onClick={() => { setShowDelete(false); setDeleteToken(''); setDeleteError(null); }}
+                  onClick={() => { setShowDelete(false); setDeleteError(null); }}
                   className="px-3 py-1 text-xs rounded border border-gray-300 hover:bg-gray-50"
                 >
                   取消

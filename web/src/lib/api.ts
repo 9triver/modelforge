@@ -111,11 +111,9 @@ export function getCalibration(id: number): Promise<CalibrationRecord> {
 export async function deleteRepo(
   namespace: string,
   name: string,
-  token: string,
 ): Promise<void> {
-  const res = await fetch(`/api/v1/repos/${namespace}/${name}`, {
+  const res = await fetch(`/api/v1/repos/${namespace}/${name}/force`, {
     method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) {
     const body = await res.text();
