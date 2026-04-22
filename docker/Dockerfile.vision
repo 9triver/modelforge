@@ -8,8 +8,8 @@ RUN apt-get update \
     && ln -sf /usr/bin/python3 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ --break-system-packages \
- && pip config set global.trusted-host mirrors.aliyun.com --break-system-packages
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ \
+ && pip config set global.trusted-host mirrors.aliyun.com
 
 COPY . /opt/modelforge
 RUN pip install --no-cache-dir --break-system-packages \
