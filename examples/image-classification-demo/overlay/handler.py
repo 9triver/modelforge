@@ -21,7 +21,9 @@ class Handler(ImageClassificationHandler):
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.processor = AutoImageProcessor.from_pretrained(model_dir)
-        self.model = AutoModelForImageClassification.from_pretrained(model_dir).to(self.device)
+        self.model = AutoModelForImageClassification.from_pretrained(
+            model_dir, low_cpu_mem_usage=False,
+        ).to(self.device)
         self.model.eval()
 
     def predict(self, images: list[Image.Image]) -> list[list[dict]]:
