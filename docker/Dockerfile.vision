@@ -12,10 +12,11 @@ RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ \
  && pip config set global.trusted-host mirrors.aliyun.com
 
 COPY . /opt/modelforge
-RUN pip install --no-cache-dir --break-system-packages \
-    torch==2.6.0 torchvision --index-url https://mirror.sjtu.edu.cn/pytorch-wheels/cu124 \
+COPY wheels/ /tmp/wheels/
+RUN pip install --no-cache-dir --break-system-packages /tmp/wheels/*.whl \
  && pip install --no-cache-dir --break-system-packages \
-    /opt/modelforge[runtime-vision,runtime-detection] transformers ultralytics
+    /opt/modelforge[runtime-vision,runtime-detection] transformers ultralytics \
+ && rm -rf /tmp/wheels
 
 WORKDIR /workspace
 ENTRYPOINT ["python", "-m", "modelforge.runtime.sandbox_entry"]

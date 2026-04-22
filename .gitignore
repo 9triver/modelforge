@@ -13,3 +13,4 @@ dist/
 synthetic_load.csv
 *.zip
 *.pt
+wheels/
