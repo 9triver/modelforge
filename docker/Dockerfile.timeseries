@@ -5,7 +5,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ \
- && pip config set global.trusted-host mirrors.aliyun.com
+ && pip config set global.trusted-host mirrors.aliyun.com \
+ && pip config set global.retries 10 \
+ && pip config set global.timeout 120
 
 COPY . /opt/modelforge
 RUN pip install --no-cache-dir torch torchvision --index-url https://mirror.sjtu.edu.cn/pytorch-wheels/cpu \

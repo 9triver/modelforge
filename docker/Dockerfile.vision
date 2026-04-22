@@ -9,7 +9,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ \
- && pip config set global.trusted-host mirrors.aliyun.com
+ && pip config set global.trusted-host mirrors.aliyun.com \
+ && pip config set global.retries 10 \
+ && pip config set global.timeout 120
 
 COPY . /opt/modelforge
 COPY wheels/ /tmp/wheels/
