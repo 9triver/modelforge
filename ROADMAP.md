@@ -130,8 +130,11 @@ GET /api/v1/repos/{ns}/{name}/metrics
 - [x] 端到端 demo 跑通：`examples/chronos-forecasting-demo/` 镜像 HF amazon/chronos-t5-tiny +
       合成数据生成脚本；浏览器里能点出 MAPE，Performance badge 能聚合
 - [ ] Docker 镜像 `modelforge-runtime:base|timeseries|vision`，CI 构建推到内网 registry
-- [ ] Evaluator Docker sandbox backend：`--network none` + 只读挂载 + 资源限额 + 超时
-- [ ] image-classification 端到端 demo（forecasting 已验证，vision 还欠 demo）
+- [x] Evaluator Docker sandbox backend：`--network none` + 只读挂载 + 资源限额 + 超时
+      **代码完成**（`backend.py` + `docker_backend.py` + `sandbox_entry.py` + Dockerfile），
+      timeseries 镜像已验证可用；vision 镜像因国内网络环境构建困难，暂缓。
+      默认 `eval_backend=inprocess`，切 `docker` 需构建镜像。
+- [x] image-classification 端到端 demo（forecasting 已验证，vision 还欠 demo）
 
 ### Phase 2 验收
 
@@ -139,7 +142,8 @@ GET /api/v1/repos/{ns}/{name}/metrics
 - [x] model card 上能看到该模型的历史 primary metric 中位数（PerformanceBadge）
 - [x] 评估完，宿主机 workdir 干净（tempdir + `shutil.rmtree(workdir, ignore_errors=True)`）
 - [x] 上传图像 ZIP，拿到 accuracy（ViT cats-vs-dogs demo 已验证）
-- [ ] 评估期间宿主机网络 / 文件系统不可被 handler 访问（当前 in-process，**未隔离**；待 Docker backend）
+- [ ] 评估期间宿主机网络 / 文件系统不可被 handler 访问（当前 in-process，**未隔离**；
+      Docker backend 代码已就绪，timeseries 镜像可用，待 vision 镜像和切换决策）
 
 ### Task 扩展（已完成）
 
