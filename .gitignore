@@ -11,3 +11,4 @@ dist/
 
 # demo dataset 输出，不入仓
 synthetic_load.csv
+*.zip
