@@ -6,6 +6,7 @@ import EvaluateTab from '../components/EvaluateTab';
 import FileList from '../components/FileList';
 import ModelIndexTable from '../components/ModelIndexTable';
 import PerformanceBadge from '../components/PerformanceBadge';
+import UseModelSnippet from '../components/UseModelSnippet';
 
 type Tab = 'card' | 'files' | 'evaluate';
 
@@ -83,6 +84,7 @@ export default function RepoPage() {
         {tab === 'card' && (
           <div>
             {agg && <PerformanceBadge agg={agg} />}
+            <UseModelSnippet fullName={preview.full_name} task={meta.pipeline_tag || null} />
             {preview.body_error && (
               <div className="bg-yellow-50 text-yellow-800 p-3 rounded mb-4 whitespace-pre-wrap text-sm">
                 {preview.body_error}

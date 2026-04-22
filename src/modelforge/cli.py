@@ -167,5 +167,82 @@ def repo_delete(repo: str):
     console.print(f"[green]✓ 仓库已删除[/green]: {repo}")
 
 
+# ---------- run ----------
+
+@app.command()
+def run(
+    repo: str = typer.Argument(..., help="仓库名 'namespace/name'"),
+    input: str = typer.Option(..., "--input", "-i", help="输入文件/目录"),
+    output: str = typer.Option(None, "--output", "-o", help="输出文件（默认 stdout）"),
+    revision: str = typer.Option("main", "--revision", "-r"),
+    endpoint: str = typer.Option(None, "--endpoint", envvar="MODELFORGE_URL"),
+    token: str = typer.Option(None, "--token", envvar="MODELFORGE_TOKEN"),
+):
+    """下载模型并跑推理。
+
+    Examples:
+        modelforge run amazon/chronos-t5-tiny -i data.csv -o pred.csv
+        modelforge run nateraw/vit-base-cats-vs-dogs -i images/ -o results.json
+    """
+    import json
+    from pathlib import Path
+
+    from .loader import load
+
+    console.print(f"[cyan]Loading {repo}@{revision}...[/cyan]")
+    handler = load(repo, revision=revision, endpoint=endpoint, token=token)
+    task = handler.task
+    console.print(f"[green]✓ Loaded[/green] task={task}")
+
+    input_path = Path(input)
+    if not input_path.exists():
+        console.print(f"[red]输入不存在：{input_path}[/red]")
+        raise typer.Exit(1)
+
+    if task == "time-series-forecasting":
+        import pandas as pd
+        df = pd.read_csv(input_path)
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        pred_df = handler.predict(df)
+        if output:
+            pred_df.to_csv(output, index=False)
+            console.print(f"[green]✓ 写入 {output}[/green] ({len(pred_df)} 行)")
+        else:
+            console.print(pred_df.to_string(index=False))
+
+    elif task == "image-classification":
+        from PIL import Image as PILImage
+        images = []
+        paths = []
+        if input_path.is_dir():
+            for p in sorted(input_path.rglob("*")):
+                if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}:
+                    images.append(PILImage.open(p).convert("RGB"))
+                    paths.append(str(p))
+        else:
+            images.append(PILImage.open(input_path).convert("RGB"))
+            paths.append(str(input_path))
+
+        if not images:
+            console.print("[red]未找到图片[/red]")
+            raise typer.Exit(1)
+
+        preds = handler.predict(images)
+        results = []
+        for path, pred in zip(paths, preds):
+            top = pred[0] if pred else {"label": "?", "score": 0}
+            results.append({"file": path, "label": top["label"], "score": top["score"]})
+
+        if output:
+            Path(output).write_text(json.dumps(results, indent=2, ensure_ascii=False))
+            console.print(f"[green]✓ 写入 {output}[/green] ({len(results)} 张)")
+        else:
+            for r in results:
+                console.print(f"  {r['file']}: {r['label']} ({r['score']:.4f})")
+    else:
+        console.print(f"[red]task '{task}' 的 CLI run 尚未支持[/red]")
+        raise typer.Exit(1)
+
+
 if __name__ == "__main__":
     app()
