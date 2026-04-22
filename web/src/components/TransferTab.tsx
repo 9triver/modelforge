@@ -227,8 +227,15 @@ export default function TransferTab({ namespace, name, revision, task }: Props) 
   // ---------- upload view ----------
   return (
     <div className="space-y-4">
-      <div className="text-sm text-gray-600">
-        上传目标场景的标注数据（ImageFolder ZIP），平台冻结 backbone 训练新分类头（linear probe），保存为新模型。
+      <div className="text-sm text-gray-600 space-y-1">
+        <div>
+          <strong>Linear Probe</strong>：冻结 base 模型 backbone，提取倒数第二层特征，训练 sklearn 线性分类头。
+        </div>
+        <div className="text-gray-500">
+          Base 模型权重不修改 — fork 出的新仓库仅包含新分类头（几 KB），推理时通过
+          <code className="bg-gray-100 px-1 rounded mx-1">base.extract_features()</code>
+          调用 base 模型。
+        </div>
       </div>
       <DatasetUpload
         onFile={setFile}
