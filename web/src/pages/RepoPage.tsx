@@ -2,20 +2,21 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { getPreview, getRepoMetrics } from '../lib/api';
 import type { AggregateMetrics, Preview } from '../lib/types';
+import CalibrateTab from '../components/CalibrateTab';
 import EvaluateTab from '../components/EvaluateTab';
 import FileList from '../components/FileList';
 import ModelIndexTable from '../components/ModelIndexTable';
 import PerformanceBadge from '../components/PerformanceBadge';
 import UseModelSnippet from '../components/UseModelSnippet';
 
-type Tab = 'card' | 'files' | 'evaluate';
+type Tab = 'card' | 'files' | 'evaluate' | 'calibrate';
 
 export default function RepoPage() {
   const { namespace = '', name = '' } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
   const tab: Tab =
-    tabParam === 'files' ? 'files' : tabParam === 'evaluate' ? 'evaluate' : 'card';
+    tabParam === 'files' ? 'files' : tabParam === 'evaluate' ? 'evaluate' : tabParam === 'calibrate' ? 'calibrate' : 'card';
   const revision = searchParams.get('revision') || 'main';
 
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -62,7 +63,7 @@ export default function RepoPage() {
         </div>
 
         <div className="border-b border-gray-200 mb-4 flex gap-1">
-          {(['card', 'files', 'evaluate'] as const).map((t) => (
+          {(['card', 'files', 'evaluate', 'calibrate'] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -76,7 +77,9 @@ export default function RepoPage() {
                 ? 'Model Card'
                 : t === 'files'
                 ? `Files (${preview.files.length})`
-                : 'Evaluate'}
+                : t === 'evaluate'
+                ? 'Evaluate'
+                : 'Calibrate'}
             </button>
           ))}
         </div>
@@ -124,6 +127,15 @@ export default function RepoPage() {
               loadAgg();
               setTab('card');
             }}
+          />
+        )}
+
+        {tab === 'calibrate' && (
+          <CalibrateTab
+            namespace={namespace}
+            name={name}
+            revision={revision}
+            task={meta.pipeline_tag || null}
           />
         )}
       </div>

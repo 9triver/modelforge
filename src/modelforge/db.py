@@ -76,6 +76,28 @@ CREATE TABLE IF NOT EXISTS evaluations (
 );
 CREATE INDEX IF NOT EXISTS idx_eval_repo ON evaluations(repo_id);
 CREATE INDEX IF NOT EXISTS idx_eval_status ON evaluations(status);
+
+-- 校准记录
+CREATE TABLE IF NOT EXISTS calibrations (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_repo_id      INTEGER NOT NULL,
+    source_revision     TEXT NOT NULL,
+    target_repo         TEXT,              -- fork 出的 namespace/name
+    target_revision     TEXT,              -- fork 的 commit SHA
+    method              TEXT NOT NULL,     -- 'linear_bias'
+    params_json         TEXT,              -- {"a": 1.02, "b": -0.5}
+    before_metrics_json TEXT,
+    after_metrics_json  TEXT,
+    primary_metric      TEXT,
+    before_value        REAL,
+    after_value         REAL,
+    status              TEXT NOT NULL,     -- queued|running|ok|error
+    duration_ms         INTEGER,
+    error               TEXT,
+    created_at          TEXT NOT NULL,
+    FOREIGN KEY (source_repo_id) REFERENCES repos(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_cal_source ON calibrations(source_repo_id);
 """
 
 
@@ -132,6 +154,26 @@ class Evaluation:
     metrics_json: str | None
     primary_metric: str | None
     primary_value: float | None
+    duration_ms: int | None
+    error: str | None
+    created_at: str
+
+
+@dataclass
+class Calibration:
+    id: int
+    source_repo_id: int
+    source_revision: str
+    target_repo: str | None
+    target_revision: str | None
+    method: str
+    params_json: str | None
+    before_metrics_json: str | None
+    after_metrics_json: str | None
+    primary_metric: str | None
+    before_value: float | None
+    after_value: float | None
+    status: str
     duration_ms: int | None
     error: str | None
     created_at: str
@@ -442,3 +484,71 @@ def aggregate_repo_metrics(repo_id: int) -> dict:
         "p25": pct(0.25),
         "p75": pct(0.75),
     }
+
+
+# ---------- Calibrations ----------
+
+def _row_to_calibration(row) -> Calibration:
+    return Calibration(
+        id=row["id"], source_repo_id=row["source_repo_id"],
+        source_revision=row["source_revision"],
+        target_repo=row["target_repo"], target_revision=row["target_revision"],
+        method=row["method"], params_json=row["params_json"],
+        before_metrics_json=row["before_metrics_json"],
+        after_metrics_json=row["after_metrics_json"],
+        primary_metric=row["primary_metric"],
+        before_value=row["before_value"], after_value=row["after_value"],
+        status=row["status"], duration_ms=row["duration_ms"],
+        error=row["error"], created_at=row["created_at"],
+    )
+
+
+def create_calibration(source_repo_id: int, source_revision: str, method: str) -> Calibration:
+    with connect() as c:
+        c.execute(
+            """INSERT INTO calibrations
+               (source_repo_id, source_revision, method, status, created_at)
+               VALUES (?, ?, ?, 'queued', ?)""",
+            (source_repo_id, source_revision, method, _now()),
+        )
+        row = c.execute(
+            "SELECT * FROM calibrations WHERE id = last_insert_rowid()"
+        ).fetchone()
+        return _row_to_calibration(row)
+
+
+def update_calibration(
+    cal_id: int,
+    *,
+    status: str,
+    target_repo: str | None = None,
+    target_revision: str | None = None,
+    params_json: str | None = None,
+    before_metrics_json: str | None = None,
+    after_metrics_json: str | None = None,
+    primary_metric: str | None = None,
+    before_value: float | None = None,
+    after_value: float | None = None,
+    duration_ms: int | None = None,
+    error: str | None = None,
+) -> None:
+    with connect() as c:
+        c.execute(
+            """UPDATE calibrations SET
+               status = ?, target_repo = ?, target_revision = ?,
+               params_json = ?, before_metrics_json = ?, after_metrics_json = ?,
+               primary_metric = ?, before_value = ?, after_value = ?,
+               duration_ms = ?, error = ?
+               WHERE id = ?""",
+            (status, target_repo, target_revision, params_json,
+             before_metrics_json, after_metrics_json, primary_metric,
+             before_value, after_value, duration_ms, error, cal_id),
+        )
+
+
+def get_calibration(cal_id: int) -> Calibration | None:
+    with connect() as c:
+        row = c.execute(
+            "SELECT * FROM calibrations WHERE id = ?", (cal_id,)
+        ).fetchone()
+        return _row_to_calibration(row) if row else None

@@ -1,5 +1,6 @@
 import type {
   AggregateMetrics,
+  CalibrationRecord,
   Evaluation,
   Facets,
   Preview,
@@ -65,4 +66,34 @@ export async function postEvaluation(
 
 export function getEvaluation(id: number): Promise<Evaluation> {
   return getJSON(`/api/v1/evaluations/${id}`);
+}
+
+export async function postCalibration(
+  namespace: string,
+  name: string,
+  dataset: File,
+  targetNamespace: string,
+  targetName: string,
+  revision = 'main',
+): Promise<{ calibration_id: number; status: string }> {
+  const fd = new FormData();
+  fd.append('dataset', dataset);
+  const qs = new URLSearchParams({
+    revision,
+    target_namespace: targetNamespace,
+    target_name: targetName,
+  });
+  const res = await fetch(
+    `/api/v1/repos/${namespace}/${name}/calibrate?${qs}`,
+    { method: 'POST', body: fd },
+  );
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`${res.status} ${res.statusText}: ${body}`);
+  }
+  return res.json();
+}
+
+export function getCalibration(id: number): Promise<CalibrationRecord> {
+  return getJSON(`/api/v1/calibrations/${id}`);
 }

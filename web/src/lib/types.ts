@@ -81,3 +81,22 @@ export interface Evaluation {
   error: string | null;
   created_at: string;
 }
+
+export interface CalibrationRecord {
+  id: number;
+  source_repo: string;
+  source_revision: string;
+  target_repo: string | null;
+  target_revision: string | null;
+  method: string;
+  params: Record<string, number> | null;
+  before_metrics: Record<string, number | null> | null;
+  after_metrics: Record<string, number | null> | null;
+  primary_metric: string | null;
+  before_value: number | null;
+  after_value: number | null;
+  status: 'queued' | 'running' | 'ok' | 'error';
+  duration_ms: number | null;
+  error: string | null;
+  created_at: string;
+}
