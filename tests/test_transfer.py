@@ -263,6 +263,7 @@ class TestGenerateTransferRepoLora:
         weights_dir.mkdir()
         (weights_dir / "adapter_model.safetensors").write_bytes(b"adapter")
         (weights_dir / "adapter_config.json").write_text('{}')
+        (weights_dir / "config.json").write_text('{"num_labels": 2}')
 
         result = TransferResult(
             method="fine_tune_lora",
@@ -285,4 +286,5 @@ class TestGenerateTransferRepoLora:
         assert (dest / "base_model" / "weights.bin").is_file()
         assert (dest / "adapter_model.safetensors").is_file()
         assert (dest / "adapter_config.json").is_file()
+        assert (dest / "config.json").is_file()
         assert "fine-tune-lora" in (dest / "README.md").read_text()

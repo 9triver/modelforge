@@ -59,6 +59,8 @@ class Handler(ImageClassificationHandler):
         from torch.utils.data import DataLoader, Dataset
         from transformers import AutoModelForImageClassification
 
+        torch.backends.cudnn.enabled = False
+
         classes = sorted(set(labels))
         cls_idx = {c: i for i, c in enumerate(classes)}
         n_classes = len(classes)
@@ -92,7 +94,8 @@ class Handler(ImageClassificationHandler):
             from peft import LoraConfig, get_peft_model
             lora_cfg = LoraConfig(r=8, lora_alpha=16,
                                   target_modules=["query", "value"],
-                                  lora_dropout=0.1)
+                                  lora_dropout=0.1,
+                                  modules_to_save=["classifier"])
             model = get_peft_model(model, lora_cfg)
         else:
             for p in model.parameters():
@@ -141,9 +144,9 @@ class Handler(ImageClassificationHandler):
         out_dir = tempfile.mkdtemp(prefix="mf_ft_")
         if method == "lora":
             model.save_pretrained(out_dir)
+            model.config.save_pretrained(out_dir)
         else:
-            merged = model
-            merged.save_pretrained(out_dir)
+            model.save_pretrained(out_dir)
         self.processor.save_pretrained(out_dir)
 
         return {

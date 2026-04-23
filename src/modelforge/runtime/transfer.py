@@ -296,6 +296,7 @@ HANDLER_TEMPLATE_FINE_TUNE_LORA = textwrap.dedent('''\
     """Fine-tune (LoRA) handler — loads base model + LoRA adapter."""
     from __future__ import annotations
 
+    import json
     from pathlib import Path
 
     import torch
@@ -312,8 +313,16 @@ HANDLER_TEMPLATE_FINE_TUNE_LORA = textwrap.dedent('''\
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
             base_dir = str(Path(model_dir) / "base_model")
             self.processor = AutoImageProcessor.from_pretrained(base_dir)
+
+            meta = json.loads((Path(model_dir) / "transfer.json").read_text())
+            classes = meta["classes"]
+            n_classes = len(classes)
             base = AutoModelForImageClassification.from_pretrained(
                 base_dir, low_cpu_mem_usage=False,
+                num_labels=n_classes,
+                id2label={i: c for i, c in enumerate(classes)},
+                label2id={c: i for i, c in enumerate(classes)},
+                ignore_mismatched_sizes=True,
             )
             self.model = PeftModel.from_pretrained(base, model_dir).to(self.device)
             self.model.eval()
@@ -450,7 +459,11 @@ def _assemble_lora(source_dir: Path, result: TransferResult, dest: Path) -> None
         raise ValueError("fine_tune_lora 结果缺少 weights_path")
     src = Path(result.weights_path)
     for p in src.iterdir():
-        if p.is_file() and (p.name.startswith("adapter_") or p.name == "preprocessor_config.json"):
+        if p.is_file() and (
+            p.name.startswith("adapter_")
+            or p.name == "config.json"
+            or p.name == "preprocessor_config.json"
+        ):
             shutil.copy2(p, dest / p.name)
 
 
