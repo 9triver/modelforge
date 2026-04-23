@@ -116,11 +116,19 @@ export async function postTransferPreview(
   dataset: File,
   revision = 'main',
   method = 'linear_probe',
+  hparams: { epochs?: number; lr?: number; unfreeze_layers?: number } = {},
 ): Promise<{ transfer_id: number; status: string }> {
   const fd = new FormData();
   fd.append('dataset', dataset);
+  const qs = new URLSearchParams({
+    revision,
+    method,
+    ...(hparams.epochs != null ? { epochs: String(hparams.epochs) } : {}),
+    ...(hparams.lr != null ? { lr: String(hparams.lr) } : {}),
+    ...(hparams.unfreeze_layers != null ? { unfreeze_layers: String(hparams.unfreeze_layers) } : {}),
+  });
   const res = await fetch(
-    `/api/v1/repos/${namespace}/${name}/transfer/preview?revision=${encodeURIComponent(revision)}&method=${encodeURIComponent(method)}`,
+    `/api/v1/repos/${namespace}/${name}/transfer/preview?${qs}`,
     { method: 'POST', body: fd },
   );
   if (!res.ok) {

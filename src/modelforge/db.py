@@ -114,6 +114,9 @@ CREATE TABLE IF NOT EXISTS transfers (
     after_metrics_json  TEXT,
     primary_metric      TEXT,
     after_value         REAL,
+    hparams_json        TEXT,
+    current_epoch       INTEGER,
+    total_epochs        INTEGER,
     status              TEXT NOT NULL,     -- queued|running|previewed|saving|ok|error
     duration_ms         INTEGER,
     error               TEXT,
@@ -217,6 +220,9 @@ class Transfer:
     after_metrics_json: str | None
     primary_metric: str | None
     after_value: float | None
+    hparams_json: str | None
+    current_epoch: int | None
+    total_epochs: int | None
     status: str
     duration_ms: int | None
     error: str | None
@@ -236,11 +242,25 @@ def connect(db_path: Path | None = None):
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     try:
         yield conn
         conn.commit()
     finally:
         conn.close()
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """对老数据库加新列（SQLite 不支持 ADD COLUMN IF NOT EXISTS）。"""
+    def _ensure_column(table: str, col: str, ddl: str) -> None:
+        cur = conn.execute(f"PRAGMA table_info({table})")
+        cols = {row[1] for row in cur.fetchall()}
+        if col not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+    _ensure_column("transfers", "hparams_json", "hparams_json TEXT")
+    _ensure_column("transfers", "current_epoch", "current_epoch INTEGER")
+    _ensure_column("transfers", "total_epochs", "total_epochs INTEGER")
 
 
 # ---------- 用户 ----------
@@ -611,6 +631,8 @@ def _row_to_transfer(row) -> Transfer:
         weights_b64=row["weights_b64"],
         after_metrics_json=row["after_metrics_json"],
         primary_metric=row["primary_metric"], after_value=row["after_value"],
+        hparams_json=row["hparams_json"],
+        current_epoch=row["current_epoch"], total_epochs=row["total_epochs"],
         status=row["status"], duration_ms=row["duration_ms"],
         error=row["error"], created_at=row["created_at"],
     )
@@ -643,6 +665,9 @@ def update_transfer(
     after_metrics_json: str | None = None,
     primary_metric: str | None = None,
     after_value: float | None = None,
+    hparams_json: str | None = None,
+    current_epoch: int | None = None,
+    total_epochs: int | None = None,
     duration_ms: int | None = None,
     error: str | None = None,
 ) -> None:
@@ -653,11 +678,13 @@ def update_transfer(
                classes_json = ?, n_classes = ?, n_samples = ?,
                weights_b64 = ?, after_metrics_json = ?,
                primary_metric = ?, after_value = ?,
+               hparams_json = ?, current_epoch = ?, total_epochs = ?,
                duration_ms = ?, error = ?
                WHERE id = ?""",
             (status, target_repo, target_revision,
              classes_json, n_classes, n_samples, weights_b64,
              after_metrics_json, primary_metric, after_value,
+             hparams_json, current_epoch, total_epochs,
              duration_ms, error, transfer_id),
         )
 

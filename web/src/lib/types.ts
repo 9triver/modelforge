@@ -114,6 +114,9 @@ export interface TransferRecord {
   after_metrics: Record<string, number | null> | null;
   primary_metric: string | null;
   after_value: number | null;
+  hparams: Record<string, number | string> | null;
+  current_epoch: number | null;
+  total_epochs: number | null;
   status: 'queued' | 'running' | 'previewed' | 'saving' | 'ok' | 'error';
   duration_ms: number | null;
   error: string | null;

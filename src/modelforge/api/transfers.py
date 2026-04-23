@@ -28,6 +28,8 @@ from ..schema import validate_model_card
 
 router = APIRouter(prefix="/api/v1", tags=["transfers"])
 
+_WEIGHTS_CACHE: dict[int, str] = {}
+
 
 # ---------- response models ----------
 
@@ -48,6 +50,14 @@ class TransferStatus(BaseModel):
     n_samples: int | None = None
     after_metrics: dict | None = None
     primary_metric: str | None = None
+    after_value: float | None = None
+    hparams: dict | None = None
+    current_epoch: int | None = None
+    total_epochs: int | None = None
+    status: str
+    duration_ms: int | None = None
+    error: str | None = None
+    created_at: str
     after_value: float | None = None
     status: str
     duration_ms: int | None = None
@@ -75,10 +85,17 @@ def _run_transfer_preview(
     dataset_bytes: bytes,
     dataset_name: str,
     method: str,
+    hparams: dict | None = None,
 ) -> None:
     db.update_transfer(transfer_id, status="running")
     start = time.monotonic()
     workdir = Path(tempfile.mkdtemp(prefix="mf_transfer_"))
+
+    def _progress_cb(epoch: int, total: int, metrics: dict) -> None:
+        db.update_transfer(
+            transfer_id, status="running",
+            current_epoch=epoch, total_epochs=total,
+        )
 
     try:
         model_dir = workdir / "model"
@@ -102,7 +119,11 @@ def _run_transfer_preview(
         handler = load_handler(model_dir, "image-classification")
         handler.warmup()
 
-        result = transfer_by_method(method, handler, images, labels)
+        result = transfer_by_method(
+            method, handler, images, labels,
+            hparams=hparams,
+            progress_cb=_progress_cb if method.startswith("fine_tune") else None,
+        )
         if result.status != "ok":
             db.update_transfer(
                 transfer_id, status="error", error=result.error,
@@ -116,12 +137,18 @@ def _run_transfer_preview(
             classes_json=json.dumps(result.classes),
             n_classes=len(result.classes),
             n_samples=result.n_samples,
-            weights_b64=result.weights_b64,
+            weights_b64=result.weights_b64 or None,
             after_metrics_json=json.dumps(result.after_metrics),
             primary_metric=result.primary_metric,
             after_value=result.after_value,
+            hparams_json=json.dumps(result.hparams) if result.hparams else None,
             duration_ms=int((time.monotonic() - start) * 1000),
         )
+
+        # fine_tune 模式：weights_path 指向临时目录，需要保留到 save 阶段
+        # 把路径存到内存缓存（DB 不存大文件路径，save 时重新 fine_tune 或从缓存取）
+        if result.weights_path:
+            _WEIGHTS_CACHE[transfer_id] = result.weights_path
     except Exception as e:  # noqa: BLE001
         db.update_transfer(
             transfer_id, status="error", error=str(e),
@@ -157,7 +184,9 @@ def _do_transfer_fork(
             classes=result_data["classes"],
             n_samples=result_data.get("n_samples", 0),
             n_holdout=result_data.get("n_holdout", 0),
-            weights_b64=result_data["weights_b64"],
+            weights_b64=result_data.get("weights_b64", "") or "",
+            weights_path=_WEIGHTS_CACHE.get(transfer_id),
+            hparams=result_data.get("hparams", {}),
             after_metrics=result_data.get("after_metrics", {}),
             after_value=result_data.get("after_value", 0),
         )
@@ -201,7 +230,7 @@ def _do_transfer_fork(
         subprocess.run(["git", "-C", str(tmp_git), "add", "-A"], check=True)
         subprocess.run(
             ["git", "-C", str(tmp_git), "commit", "-q", "-m",
-             f"linear probe from {source_repo}@{revision[:8]} → {len(result.classes)} classes"],
+             f"{result.method} from {source_repo}@{revision[:8]} → {len(result.classes)} classes"],
             check=True,
         )
         subprocess.run(
@@ -225,9 +254,13 @@ def _do_transfer_fork(
         )
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
+        wp = _WEIGHTS_CACHE.pop(transfer_id, None)
+        if wp:
+            shutil.rmtree(wp, ignore_errors=True)
 
 
 # ---------- endpoints ----------
+
 
 @router.post(
     "/repos/{namespace}/{name}/transfer/preview",
@@ -241,6 +274,9 @@ async def preview_transfer(
     dataset: UploadFile,
     revision: str = Query("main"),
     method: str = Query("linear_probe"),
+    epochs: int = Query(10),
+    lr: float = Query(1e-5),
+    unfreeze_layers: int = Query(2),
 ):
     repo = db.get_repo(namespace, name)
     if not repo:
@@ -250,10 +286,11 @@ async def preview_transfer(
     except FileNotFoundError:
         raise HTTPException(400, f"Revision '{revision}' not found")
 
+    hparams = {"epochs": epochs, "lr": lr, "unfreeze_layers": unfreeze_layers}
     payload = await dataset.read()
     ds_name = Path(dataset.filename or "data.zip").name
     record = db.create_transfer(repo.id, sha, method)
-    bg.add_task(_run_transfer_preview, record.id, namespace, name, sha, payload, ds_name, method)
+    bg.add_task(_run_transfer_preview, record.id, namespace, name, sha, payload, ds_name, method, hparams)
     return TransferCreated(transfer_id=record.id, status="queued")
 
 
@@ -281,6 +318,7 @@ async def save_transfer(transfer_id: int, body: SaveRequest, bg: BackgroundTasks
         "classes": json.loads(rec.classes_json) if rec.classes_json else [],
         "n_samples": rec.n_samples,
         "weights_b64": rec.weights_b64 or "",
+        "hparams": json.loads(rec.hparams_json) if rec.hparams_json else {},
         "after_metrics": json.loads(rec.after_metrics_json) if rec.after_metrics_json else {},
         "after_value": rec.after_value,
     }
@@ -323,6 +361,9 @@ def get_transfer(transfer_id: int):
         after_metrics=json.loads(rec.after_metrics_json) if rec.after_metrics_json else None,
         primary_metric=rec.primary_metric,
         after_value=rec.after_value,
+        hparams=json.loads(rec.hparams_json) if rec.hparams_json else None,
+        current_epoch=rec.current_epoch,
+        total_epochs=rec.total_epochs,
         status=rec.status,
         duration_ms=rec.duration_ms,
         error=rec.error,

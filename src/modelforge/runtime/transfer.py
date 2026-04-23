@@ -1,15 +1,9 @@
-"""Phase 4b 迁移学习：image-classification linear probe。
+"""Phase 4b 迁移学习：image-classification。
 
-冻结 base 模型的 backbone，提取倒数第二层特征向量（通过
-ImageClassificationHandler.extract_features），用 sklearn
-LogisticRegression 训练新的分类头。fork 出的新仓库自包含：
-
-  base_model/                # base 模型完整复制
-  handler.py                 # 加载 base + transfer.json，predict 时
-                             #   features = base.extract_features(images)
-                             #   probs = clf.predict_proba(features)
-  transfer.json              # {classes, weights_b64, ...}
-  README.md                  # frontmatter 写明 base_model + transfer 元数据
+三种方法：
+  - linear_probe: 冻结 backbone，sklearn 分类头（CPU 秒级）
+  - fine_tune_full: 解冻最后 N 层 + 新分类头（GPU 分钟级）
+  - fine_tune_lora: LoRA adapter + 新分类头（GPU 分钟级，权重小）
 """
 from __future__ import annotations
 
@@ -21,7 +15,7 @@ import shutil
 import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from .metrics import classification as cls_metrics
 from .tasks.base import TaskHandler
@@ -29,7 +23,7 @@ from .tasks.base import TaskHandler
 if TYPE_CHECKING:
     from PIL.Image import Image
 
-METHODS = ["linear_probe"]
+METHODS = ["linear_probe", "fine_tune_full", "fine_tune_lora"]
 
 
 @dataclass
@@ -39,6 +33,8 @@ class TransferResult:
     n_samples: int = 0
     n_holdout: int = 0
     weights_b64: str = ""
+    weights_path: str | None = None
+    hparams: dict[str, Any] = field(default_factory=dict)
     after_metrics: dict[str, Any] = field(default_factory=dict)
     primary_metric: str = "accuracy"
     after_value: float = 0.0
@@ -125,24 +121,84 @@ _TRANSFER_METHODS = {
 }
 
 
+def _fine_tune_wrapper(
+    handler: TaskHandler,
+    images: "list[Image]",
+    labels: list[str],
+    holdout_ratio: float = 0.3,
+    *,
+    ft_method: str,
+    hparams: dict[str, Any] | None = None,
+    progress_cb: Callable[[int, int, dict[str, Any]], None] | None = None,
+) -> TransferResult:
+    """fine_tune_full / fine_tune_lora 的共享 wrapper。"""
+    hp = hparams or {}
+    epochs = int(hp.get("epochs", 10))
+    lr = float(hp.get("lr", 1e-5))
+    unfreeze_layers = int(hp.get("unfreeze_layers", 2))
+
+    try:
+        result = handler.fine_tune(
+            images, labels,
+            method=ft_method,
+            epochs=epochs,
+            lr=lr,
+            unfreeze_layers=unfreeze_layers,
+            progress_cb=progress_cb,
+        )
+    except NotImplementedError as e:
+        return TransferResult(status="error", error=str(e))
+    except Exception as e:  # noqa: BLE001
+        return TransferResult(status="error", error=f"fine_tune 失败：{e}")
+
+    classes = result.get("classes", [])
+    weights_path = result.get("weights_path")
+
+    # holdout 评估已在 handler.fine_tune 内完成，从 progress_cb 最后一次拿
+    # 但也可以从 result 里拿 — 让 handler 返回 metrics
+    after_metrics = result.get("metrics", {})
+    if not after_metrics and progress_cb:
+        pass  # metrics 已通过 progress_cb 更新到 DB
+
+    return TransferResult(
+        method=f"fine_tune_{ft_method}",
+        classes=classes,
+        n_samples=len(images),
+        weights_path=weights_path,
+        hparams={"method": ft_method, "epochs": epochs, "lr": lr,
+                 "unfreeze_layers": unfreeze_layers},
+        after_metrics=after_metrics,
+        primary_metric="accuracy",
+        after_value=float(after_metrics.get("val_accuracy", 0.0)),
+    )
+
+
 def transfer_by_method(
     method: str,
     handler: TaskHandler,
     images: "list[Image]",
     labels: list[str],
     holdout_ratio: float = 0.3,
+    *,
+    hparams: dict[str, Any] | None = None,
+    progress_cb: Callable[[int, int, dict[str, Any]], None] | None = None,
 ) -> TransferResult:
-    fn = _TRANSFER_METHODS.get(method)
-    if fn is None:
-        return TransferResult(
-            status="error", error=f"未知方法 '{method}'，支持：{list(_TRANSFER_METHODS)}",
+    if method == "linear_probe":
+        return linear_probe(handler, images, labels, holdout_ratio)
+    if method in ("fine_tune_full", "fine_tune_lora"):
+        ft_method = method.replace("fine_tune_", "")
+        return _fine_tune_wrapper(
+            handler, images, labels, holdout_ratio,
+            ft_method=ft_method, hparams=hparams, progress_cb=progress_cb,
         )
-    return fn(handler, images, labels, holdout_ratio)
+    return TransferResult(
+        status="error", error=f"未知方法 '{method}'，支持：{METHODS}",
+    )
 
 
-# ---------- handler template ----------
+# ---------- handler templates ----------
 
-HANDLER_TEMPLATE = textwrap.dedent('''\
+HANDLER_TEMPLATE_LINEAR_PROBE = textwrap.dedent('''\
     """Linear probe handler — wraps base model with new classification head."""
     from __future__ import annotations
 
@@ -183,9 +239,105 @@ HANDLER_TEMPLATE = textwrap.dedent('''\
             return results
 
         def extract_features(self, images):
-            # 透传给 base，让链式 transfer 也能跑
             return self.base.extract_features(images)
 ''')
+
+
+HANDLER_TEMPLATE_FINE_TUNE_FULL = textwrap.dedent('''\
+    """Fine-tune (full) handler — loads fine-tuned weights directly."""
+    from __future__ import annotations
+
+    import torch
+    from PIL import Image
+    from modelforge.runtime.tasks import ImageClassificationHandler
+
+
+    class Handler(ImageClassificationHandler):
+        def __init__(self, model_dir: str):
+            super().__init__(model_dir)
+            from transformers import AutoImageProcessor, AutoModelForImageClassification
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.processor = AutoImageProcessor.from_pretrained(model_dir)
+            self.model = AutoModelForImageClassification.from_pretrained(
+                model_dir, low_cpu_mem_usage=False,
+            ).to(self.device)
+            self.model.eval()
+
+        def predict(self, images):
+            results = []
+            for img in images:
+                inputs = self.processor(images=img, return_tensors="pt").to(self.device)
+                with torch.no_grad():
+                    logits = self.model(**inputs).logits
+                probs = torch.softmax(logits, dim=-1)[0]
+                top_k = probs.topk(min(5, len(probs)))
+                preds = [
+                    {"label": self.model.config.id2label.get(idx.item(), str(idx.item())),
+                     "score": round(score.item(), 4)}
+                    for score, idx in zip(top_k.values, top_k.indices)
+                ]
+                results.append(preds)
+            return results
+
+        def extract_features(self, images):
+            import numpy as np
+            feats = []
+            for img in images:
+                inputs = self.processor(images=img, return_tensors="pt").to(self.device)
+                with torch.no_grad():
+                    outputs = self.model(**inputs, output_hidden_states=True)
+                    cls_token = outputs.hidden_states[-1][:, 0, :]
+                feats.append(cls_token.cpu().numpy())
+            return np.concatenate(feats, axis=0)
+''')
+
+
+HANDLER_TEMPLATE_FINE_TUNE_LORA = textwrap.dedent('''\
+    """Fine-tune (LoRA) handler — loads base model + LoRA adapter."""
+    from __future__ import annotations
+
+    from pathlib import Path
+
+    import torch
+    from PIL import Image
+    from modelforge.runtime.tasks import ImageClassificationHandler
+
+
+    class Handler(ImageClassificationHandler):
+        def __init__(self, model_dir: str):
+            super().__init__(model_dir)
+            from transformers import AutoImageProcessor, AutoModelForImageClassification
+            from peft import PeftModel
+
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            base_dir = str(Path(model_dir) / "base_model")
+            self.processor = AutoImageProcessor.from_pretrained(base_dir)
+            base = AutoModelForImageClassification.from_pretrained(
+                base_dir, low_cpu_mem_usage=False,
+            )
+            self.model = PeftModel.from_pretrained(base, model_dir).to(self.device)
+            self.model.eval()
+
+        def predict(self, images):
+            results = []
+            for img in images:
+                inputs = self.processor(images=img, return_tensors="pt").to(self.device)
+                with torch.no_grad():
+                    logits = self.model(**inputs).logits
+                probs = torch.softmax(logits, dim=-1)[0]
+                top_k = probs.topk(min(5, len(probs)))
+                cfg = self.model.config if hasattr(self.model, "config") else self.model.base_model.config
+                id2label = cfg.id2label if hasattr(cfg, "id2label") else {}
+                preds = [
+                    {"label": id2label.get(idx.item(), str(idx.item())),
+                     "score": round(score.item(), 4)}
+                    for score, idx in zip(top_k.values, top_k.indices)
+                ]
+                results.append(preds)
+            return results
+''')
+
+HANDLER_TEMPLATE = HANDLER_TEMPLATE_LINEAR_PROBE  # 向后兼容
 
 
 # ---------- repo generation ----------
@@ -199,18 +351,34 @@ def generate_transfer_repo(
     data_hash: str,
     dest: Path,
 ) -> None:
-    """组装 fork 仓库：base_model/ + handler.py + transfer.json + README.md。"""
+    """组装 fork 仓库。按 method 分三种结构：
+      - linear_probe: base_model/ + handler.py + transfer.json
+      - fine_tune_full: handler.py + 直接放权重文件
+      - fine_tune_lora: base_model/ + adapter_* + handler.py
+    """
     dest.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(source_dir, dest / "base_model")
+    method = result.method
 
-    transfer_meta = {
-        "method": result.method,
+    if method == "fine_tune_full":
+        _assemble_full(source_dir, result, dest)
+        handler_template = HANDLER_TEMPLATE_FINE_TUNE_FULL
+    elif method == "fine_tune_lora":
+        _assemble_lora(source_dir, result, dest)
+        handler_template = HANDLER_TEMPLATE_FINE_TUNE_LORA
+    else:  # linear_probe
+        shutil.copytree(source_dir, dest / "base_model")
+        handler_template = HANDLER_TEMPLATE_LINEAR_PROBE
+
+    transfer_meta: dict[str, Any] = {
+        "method": method,
         "classes": result.classes,
         "n_samples": result.n_samples,
-        "weights_b64": result.weights_b64,
+        "hparams": result.hparams,
     }
+    if result.weights_b64:
+        transfer_meta["weights_b64"] = result.weights_b64
     (dest / "transfer.json").write_text(json.dumps(transfer_meta, indent=2))
-    (dest / "handler.py").write_text(HANDLER_TEMPLATE)
+    (dest / "handler.py").write_text(handler_template)
 
     src_meta = {}
     src_readme = source_dir / "README.md"
@@ -225,6 +393,7 @@ def generate_transfer_repo(
     classes_str = ", ".join(result.classes)
     after_acc = result.after_value
     after_f1 = result.after_metrics.get("f1_macro", "N/A")
+    method_tag = method.replace("_", "-")
     readme = textwrap.dedent(f"""\
         ---
         license: {src_meta.get('license', 'unknown')}
@@ -234,9 +403,9 @@ def generate_transfer_repo(
         tags:
           - image-classification
           - transfer-learning
-          - linear-probe
+          - {method_tag}
         transfer:
-          method: {result.method}
+          method: {method}
           source_repo: {source_repo}
           source_revision: {source_revision}
           target_data_hash: "sha256:{data_hash}"
@@ -247,7 +416,7 @@ def generate_transfer_repo(
 
         # {ns}/{name}
 
-        Linear probe transferred from [{source_repo}](/{source_repo}).
+        Transferred from [{source_repo}](/{source_repo}) via **{method}**.
 
         - **Classes** ({len(result.classes)}): {classes_str}
         - **Training samples**: {result.n_samples} (holdout: {result.n_holdout})
@@ -262,6 +431,27 @@ def generate_transfer_repo(
     gitattr = source_dir / ".gitattributes"
     if gitattr.is_file():
         shutil.copy2(gitattr, dest / ".gitattributes")
+
+
+def _assemble_full(source_dir: Path, result: TransferResult, dest: Path) -> None:
+    """fine_tune_full：权重文件直接放在 dest 顶层，不保留 base_model/。"""
+    if not result.weights_path:
+        raise ValueError("fine_tune_full 结果缺少 weights_path")
+    src = Path(result.weights_path)
+    for p in src.iterdir():
+        if p.is_file():
+            shutil.copy2(p, dest / p.name)
+
+
+def _assemble_lora(source_dir: Path, result: TransferResult, dest: Path) -> None:
+    """fine_tune_lora：base_model/ 保留 LFS 指针 + LoRA adapter 文件在顶层。"""
+    shutil.copytree(source_dir, dest / "base_model")
+    if not result.weights_path:
+        raise ValueError("fine_tune_lora 结果缺少 weights_path")
+    src = Path(result.weights_path)
+    for p in src.iterdir():
+        if p.is_file() and (p.name.startswith("adapter_") or p.name == "preprocessor_config.json"):
+            shutil.copy2(p, dest / p.name)
 
 
 def compute_data_hash(data: bytes) -> str:

@@ -41,6 +41,10 @@ runtime-detection = [
 runtime-calibration = [
     "scikit-learn>=1.4",
 ]
+runtime-transfer = [
+    "peft>=0.10",
+    "safetensors>=0.4",
+]
 
 [project.scripts]
 modelforge = "modelforge.cli:app"

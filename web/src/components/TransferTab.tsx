@@ -8,14 +8,13 @@ function fmt(v: number | null | undefined): string {
   return v.toFixed(4);
 }
 
-const STATUS_COLOR: Record<string, string> = {
-  queued: 'bg-gray-100 text-gray-700',
-  running: 'bg-amber-100 text-amber-800',
-  previewed: 'bg-blue-100 text-blue-800',
-  saving: 'bg-amber-100 text-amber-800',
-  ok: 'bg-green-100 text-green-800',
-  error: 'bg-red-100 text-red-800',
-};
+const ALL_METHODS = [
+  { id: 'linear_probe', label: 'Linear Probe', desc: '冻结 backbone，sklearn 线性分类头（CPU 秒级）', needsHparams: false },
+  { id: 'fine_tune_full', label: 'Fine-tune (full)', desc: '解冻最后 N 层 + 新分类头（GPU 分钟级）', needsHparams: true },
+  { id: 'fine_tune_lora', label: 'Fine-tune (LoRA)', desc: 'LoRA adapter + 新分类头（GPU 分钟级，权重小）', needsHparams: true },
+] as const;
+
+type MethodId = (typeof ALL_METHODS)[number]['id'];
 
 type Props = {
   namespace: string;
@@ -26,6 +25,10 @@ type Props = {
 
 export default function TransferTab({ namespace, name, revision, task }: Props) {
   const [file, setFile] = useState<File | null>(null);
+  const [method, setMethod] = useState<MethodId>('linear_probe');
+  const [epochs, setEpochs] = useState(10);
+  const [lr, setLr] = useState(1e-5);
+  const [unfreezeL, setUnfreezeL] = useState(2);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [rec, setRec] = useState<TransferRecord | null>(null);
@@ -46,7 +49,6 @@ export default function TransferTab({ namespace, name, revision, task }: Props) 
   useEffect(() => {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
-
   if (task !== 'image-classification') {
     return (
       <div className="bg-yellow-50 text-yellow-800 p-4 rounded text-sm">
@@ -54,6 +56,8 @@ export default function TransferTab({ namespace, name, revision, task }: Props) 
       </div>
     );
   }
+
+  const needsHparams = ALL_METHODS.find((m) => m.id === method)?.needsHparams ?? false;
 
   const pollOne = (id: number) => {
     pollRef.current = window.setInterval(async () => {
@@ -75,7 +79,8 @@ export default function TransferTab({ namespace, name, revision, task }: Props) 
     setRec(null);
     setSavedRec(null);
     try {
-      const { transfer_id } = await postTransferPreview(namespace, name, file, revision);
+      const hparams = needsHparams ? { epochs, lr, unfreeze_layers: unfreezeL } : {};
+      const { transfer_id } = await postTransferPreview(namespace, name, file, revision, method, hparams);
       const r = await getTransfer(transfer_id);
       setRec(r);
       pollOne(transfer_id);
@@ -143,9 +148,22 @@ export default function TransferTab({ namespace, name, revision, task }: Props) 
     return (
       <div className="space-y-4">
         {isRunning && (
-          <div className="text-sm text-gray-600 flex items-center gap-2">
-            <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-            正在提取特征并训练分类头…
+          <div className="space-y-2">
+            <div className="text-sm text-gray-600 flex items-center gap-2">
+              <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              {rec.method.startsWith('fine_tune') ? '正在训练模型…' : '正在提取特征并训练分类头…'}
+            </div>
+            {rec.current_epoch != null && rec.total_epochs != null && rec.total_epochs > 0 && (
+              <div className="space-y-1">
+                <div className="text-xs text-gray-500">Epoch {rec.current_epoch} / {rec.total_epochs}</div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div
+                    className="bg-blue-500 h-2 rounded-full transition-all"
+                    style={{ width: `${(rec.current_epoch / rec.total_epochs) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -156,7 +174,8 @@ export default function TransferTab({ namespace, name, revision, task }: Props) 
         {isPreviewed && rec.after_metrics && (
           <div className="space-y-3">
             <div className="text-sm text-gray-700">
-              Linear probe: <span className="font-medium">{rec.n_classes} 个类别</span>
+              <code className="bg-gray-100 px-1 rounded">{rec.method}</code>
+              : <span className="font-medium">{rec.n_classes} 个类别</span>
               {rec.classes && (
                 <span className="text-gray-500 ml-1">({rec.classes.join(', ')})</span>
               )}
@@ -184,24 +203,15 @@ export default function TransferTab({ namespace, name, revision, task }: Props) 
               <div className="text-sm font-medium text-gray-700">保存为新模型</div>
               <div className="flex items-center gap-2 text-sm">
                 <span className="text-gray-500">Fork to:</span>
-                <input
-                  value={targetNs}
-                  onChange={(e) => setTargetNs(e.target.value)}
-                  className="border border-gray-300 rounded px-2 py-1 w-32 text-sm"
-                />
+                <input value={targetNs} onChange={(e) => setTargetNs(e.target.value)}
+                  className="border border-gray-300 rounded px-2 py-1 w-32 text-sm" />
                 <span className="text-gray-400">/</span>
-                <input
-                  value={targetName}
-                  onChange={(e) => setTargetName(e.target.value)}
-                  className="border border-gray-300 rounded px-2 py-1 w-64 text-sm"
-                />
+                <input value={targetName} onChange={(e) => setTargetName(e.target.value)}
+                  className="border border-gray-300 rounded px-2 py-1 w-64 text-sm" />
               </div>
               <div className="flex gap-2">
-                <button
-                  disabled={!targetNs || !targetName || saving}
-                  onClick={doSave}
-                  className="px-4 py-2 rounded bg-green-600 text-white text-sm font-medium disabled:bg-gray-300"
-                >
+                <button disabled={!targetNs || !targetName || saving} onClick={doSave}
+                  className="px-4 py-2 rounded bg-green-600 text-white text-sm font-medium disabled:bg-gray-300">
                   {saving ? '保存中…' : 'Save as new model'}
                 </button>
                 <button onClick={reset} className="px-3 py-1.5 text-sm border border-gray-300 rounded hover:bg-gray-50">
@@ -212,14 +222,6 @@ export default function TransferTab({ namespace, name, revision, task }: Props) 
             </div>
           </div>
         )}
-
-        {!isPreviewed && !isRunning && rec.status !== 'error' && (
-          <div className="text-sm text-gray-500">
-            <span className={`text-xs px-1.5 py-0.5 rounded ${STATUS_COLOR[rec.status] || ''}`}>
-              {rec.status}
-            </span>
-          </div>
-        )}
       </div>
     );
   }
@@ -227,30 +229,58 @@ export default function TransferTab({ namespace, name, revision, task }: Props) 
   // ---------- upload view ----------
   return (
     <div className="space-y-4">
-      <div className="text-sm text-gray-600 space-y-1">
-        <div>
-          <strong>Linear Probe</strong>：冻结 base 模型 backbone，提取倒数第二层特征，训练 sklearn 线性分类头。
-        </div>
-        <div className="text-gray-500">
-          Base 模型权重不修改 — fork 出的新仓库仅包含新分类头（几 KB），推理时通过
-          <code className="bg-gray-100 px-1 rounded mx-1">base.extract_features()</code>
-          调用 base 模型。
+      <div className="text-sm text-gray-600">
+        上传目标场景的标注数据（ImageFolder ZIP），选择迁移方法，保存为新模型。
+      </div>
+
+      <div className="space-y-2">
+        <div className="text-xs font-semibold text-gray-500 uppercase">Method</div>
+        <div className="space-y-1">
+          {ALL_METHODS.map((m) => (
+            <label key={m.id} className={`flex items-start gap-2 p-2 rounded cursor-pointer ${method === m.id ? 'bg-blue-50 border border-blue-200' : 'hover:bg-gray-50'}`}>
+              <input type="radio" name="transfer-method" value={m.id} checked={method === m.id}
+                onChange={() => setMethod(m.id)} className="mt-0.5 accent-blue-600" />
+              <div>
+                <div className="text-sm font-medium">{m.label}</div>
+                <div className="text-xs text-gray-500">{m.desc}</div>
+              </div>
+            </label>
+          ))}
         </div>
       </div>
-      <DatasetUpload
-        onFile={setFile}
-        disabled={submitting}
-        hint="ZIP — ImageFolder 格式（class_name/xxx.jpg），每类至少 4 张"
-      />
+
+      {needsHparams && (
+        <div className="bg-gray-50 rounded p-3 space-y-2">
+          <div className="text-xs font-semibold text-gray-500 uppercase">Hyperparameters</div>
+          <div className="grid grid-cols-3 gap-3 text-sm">
+            <div>
+              <label className="text-xs text-gray-500">Epochs</label>
+              <input type="number" min={1} max={100} value={epochs} onChange={(e) => setEpochs(+e.target.value)}
+                className="w-full border border-gray-300 rounded px-2 py-1 text-sm" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">Learning rate</label>
+              <input type="number" step={0.00001} min={0.000001} value={lr} onChange={(e) => setLr(+e.target.value)}
+                className="w-full border border-gray-300 rounded px-2 py-1 text-sm" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">Unfreeze layers</label>
+              <input type="number" min={0} max={12} value={unfreezeL} onChange={(e) => setUnfreezeL(+e.target.value)}
+                className="w-full border border-gray-300 rounded px-2 py-1 text-sm" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      <DatasetUpload onFile={setFile} disabled={submitting}
+        hint="ZIP — ImageFolder 格式（class_name/xxx.jpg），每类至少 4 张" />
+
       <div className="flex items-center justify-between text-sm">
         <span className="text-gray-600">
           Revision: <code className="bg-gray-100 px-1 rounded">{revision}</code>
         </span>
-        <button
-          disabled={!file || submitting}
-          onClick={runPreview}
-          className="px-4 py-2 rounded bg-blue-600 text-white text-sm font-medium disabled:bg-gray-300"
-        >
+        <button disabled={!file || submitting} onClick={runPreview}
+          className="px-4 py-2 rounded bg-blue-600 text-white text-sm font-medium disabled:bg-gray-300">
           {submitting ? '提交中…' : 'Preview transfer'}
         </button>
       </div>
