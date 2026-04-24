@@ -20,6 +20,8 @@ class Handler(ImageClassificationHandler):
         from transformers import AutoImageProcessor, AutoModelForImageClassification
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        if self.device == "cuda":
+            torch.backends.cudnn.enabled = False
         self.processor = AutoImageProcessor.from_pretrained(model_dir)
         self.model = AutoModelForImageClassification.from_pretrained(
             model_dir, low_cpu_mem_usage=False,
@@ -58,8 +60,6 @@ class Handler(ImageClassificationHandler):
         import tempfile
         from torch.utils.data import DataLoader, Dataset
         from transformers import AutoModelForImageClassification
-
-        torch.backends.cudnn.enabled = False
 
         classes = sorted(set(labels))
         cls_idx = {c: i for i, c in enumerate(classes)}
