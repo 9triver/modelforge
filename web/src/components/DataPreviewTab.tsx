@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { getCsvPreview, getImagePreview } from '../lib/api';
-import type { CsvPreview, FileItem, ImagePreview } from '../lib/types';
+import { getCocoPreview, getCsvPreview, getImagePreview } from '../lib/api';
+import type { CocoPreview, CsvPreview, FileItem, ImagePreview } from '../lib/types';
 
 type Props = {
   namespace: string;
@@ -11,6 +11,9 @@ type Props = {
 };
 
 export default function DataPreviewTab({ namespace, name, revision, dataFormat, files }: Props) {
+  if (dataFormat === 'coco_json') {
+    return <CocoJsonPreview namespace={namespace} name={name} revision={revision} />;
+  }
   if (dataFormat === 'image_folder') {
     return <ImageFolderPreview namespace={namespace} name={name} revision={revision} />;
   }
@@ -119,6 +122,57 @@ function ImageFolderPreview({ namespace, name, revision }: {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function CocoJsonPreview({ namespace, name, revision }: {
+  namespace: string; name: string; revision: string;
+}) {
+  const [data, setData] = useState<CocoPreview | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    getCocoPreview(namespace, name, revision)
+      .then(setData)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [namespace, name, revision]);
+
+  if (loading) return <div className="text-sm text-gray-500">加载中...</div>;
+  if (error) return <div className="bg-red-50 text-red-800 p-3 rounded text-sm">{error}</div>;
+  if (!data) return null;
+
+  return (
+    <div className="space-y-4">
+      <div className="text-sm text-gray-600">
+        {data.total_images} 张图片 · {data.total_annotations} 个标注 · {data.categories.length} 个类别
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {data.categories.map((c) => (
+          <span key={c.name} className="text-xs px-2 py-1 bg-gray-100 rounded">
+            {c.name} <span className="text-gray-400">({c.count})</span>
+          </span>
+        ))}
+      </div>
+
+      <div className="flex flex-wrap gap-3">
+        {data.samples.map((s) => (
+          <div key={s.path} className="rounded border border-gray-200 overflow-hidden" title={`${s.path} (${s.n_annotations} annotations)`}>
+            <img
+              src={`data:image/jpeg;base64,${s.thumbnail_b64}`}
+              alt={s.path}
+              className="w-64 h-auto"
+            />
+            <div className="text-xs text-gray-500 px-2 py-1 bg-gray-50">
+              {s.n_annotations} annotations
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

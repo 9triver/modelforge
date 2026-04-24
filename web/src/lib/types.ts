@@ -142,3 +142,15 @@ export interface ImagePreviewClass {
 export interface ImagePreview {
   classes: ImagePreviewClass[];
 }
+
+export interface CocoCategory {
+  name: string;
+  count: number;
+}
+
+export interface CocoPreview {
+  total_images: number;
+  total_annotations: number;
+  categories: CocoCategory[];
+  samples: { path: string; thumbnail_b64: string; n_annotations: number }[];
+}

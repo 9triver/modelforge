@@ -1,6 +1,7 @@
 import type {
   AggregateMetrics,
   CalibrationRecord,
+  CocoPreview,
   CsvPreview,
   Evaluation,
   Facets,
@@ -207,4 +208,14 @@ export function getImagePreview(
 
 export function listDatasetRepos(dataFormat?: string): Promise<SearchResult[]> {
   return searchRepos({ repo_type: 'dataset', data_format: dataFormat });
+}
+
+export function getCocoPreview(
+  namespace: string,
+  name: string,
+  revision = 'main',
+  limit = 12,
+): Promise<CocoPreview> {
+  const qs = new URLSearchParams({ revision, limit: String(limit) });
+  return getJSON(`/api/v1/repos/${namespace}/${name}/preview-coco?${qs}`);
 }

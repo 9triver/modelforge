@@ -1,13 +1,15 @@
-"""Dataset 预览 API：CSV 前 N 行 + ImageFolder 缩略图。
+"""Dataset 预览 API：CSV 前 N 行 + ImageFolder 缩略图 + COCO 标注预览。
 
 GET /api/v1/repos/{ns}/{name}/preview-csv?path=data.csv&limit=100
 GET /api/v1/repos/{ns}/{name}/preview-images?limit=20
+GET /api/v1/repos/{ns}/{name}/preview-coco?limit=12
 """
 from __future__ import annotations
 
 import base64
 import csv
 import io
+import json
 import subprocess
 from collections import defaultdict
 
@@ -135,3 +137,107 @@ def preview_images(
         classes.append(ImageClass(name=cls_name, count=len(paths), samples=samples))
 
     return ImagePreviewResponse(classes=classes)
+
+
+# ---------- COCO preview ----------
+
+_BBOX_COLORS = [
+    "red", "blue", "green", "orange", "purple", "cyan", "magenta", "yellow",
+]
+
+
+class CocoCategory(BaseModel):
+    name: str
+    count: int
+
+
+class CocoSample(BaseModel):
+    path: str
+    thumbnail_b64: str
+    n_annotations: int
+
+
+class CocoPreviewResponse(BaseModel):
+    total_images: int
+    total_annotations: int
+    categories: list[CocoCategory]
+    samples: list[CocoSample]
+
+
+def _make_coco_thumbnail(
+    img_data: bytes, annotations: list[dict], cat_map: dict[int, str], size: int = 256,
+) -> str | None:
+    try:
+        from PIL import Image as PILImage, ImageDraw
+        img = PILImage.open(io.BytesIO(img_data)).convert("RGB")
+        orig_w, orig_h = img.size
+        draw = ImageDraw.Draw(img)
+        for ann in annotations:
+            x, y, w, h = ann["bbox"]
+            cat_id = ann.get("category_id", 0)
+            color = _BBOX_COLORS[cat_id % len(_BBOX_COLORS)]
+            draw.rectangle([x, y, x + w, y + h], outline=color, width=max(2, orig_w // 200))
+            label = cat_map.get(cat_id, str(cat_id))
+            draw.text((x + 2, max(0, y - 12)), label, fill=color)
+        img.thumbnail((size, size))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=80)
+        return base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        return None
+
+
+@router.get(
+    "/repos/{namespace}/{name}/preview-coco",
+    response_model=CocoPreviewResponse,
+)
+def preview_coco(
+    namespace: str,
+    name: str,
+    revision: str = Query("main"),
+    limit: int = Query(12, ge=1, le=30),
+):
+    ann_content = repo_reader.read_file(namespace, name, revision, "annotations.json")
+    if ann_content is None:
+        raise HTTPException(404, "未找到 annotations.json")
+
+    try:
+        coco = json.loads(ann_content)
+    except json.JSONDecodeError as e:
+        raise HTTPException(400, f"annotations.json 解析失败：{e}")
+
+    images = coco.get("images", [])
+    annotations = coco.get("annotations", [])
+    categories_raw = coco.get("categories", [])
+
+    cat_map = {c["id"]: c["name"] for c in categories_raw}
+    cat_counts: dict[str, int] = defaultdict(int)
+    anns_by_image: dict[int, list[dict]] = defaultdict(list)
+    for ann in annotations:
+        anns_by_image[ann["image_id"]].append(ann)
+        cat_name = cat_map.get(ann.get("category_id", 0), "unknown")
+        cat_counts[cat_name] += 1
+
+    cat_list = [CocoCategory(name=n, count=c) for n, c in sorted(cat_counts.items(), key=lambda x: -x[1])]
+
+    samples: list[CocoSample] = []
+    for img_info in images[:limit]:
+        img_id = img_info["id"]
+        file_name = img_info.get("file_name", "")
+        img_path = f"images/{file_name}" if not file_name.startswith("images/") else file_name
+        blob = _read_blob_bytes(namespace, name, revision, img_path)
+        if blob is None:
+            continue
+        img_anns = anns_by_image.get(img_id, [])
+        thumb = _make_coco_thumbnail(blob, img_anns, cat_map)
+        if thumb:
+            samples.append(CocoSample(
+                path=img_path, thumbnail_b64=thumb, n_annotations=len(img_anns),
+            ))
+
+    return CocoPreviewResponse(
+        total_images=len(images),
+        total_annotations=len(annotations),
+        categories=cat_list,
+        samples=samples,
+    )
