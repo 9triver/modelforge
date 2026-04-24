@@ -63,6 +63,8 @@ class SearchResult:
     best_metric_value: float | None
     revision: str | None
     updated_at: str | None
+    repo_type: str = "model"
+    data_format: str | None = None
 
 
 class ModelHubError(Exception):
@@ -201,13 +203,15 @@ class ModelHub:
         tag: str | None = None,
         metric: str | None = None,
         max_metric: float | None = None,
+        repo_type: str | None = None,
+        data_format: str | None = None,
         limit: int = 100,
     ) -> list[SearchResult]:
         """按 Model Card 字段搜索仓库。
 
         Examples:
             hub.search(library="lightgbm", metric="mape", max_metric=4.0)
-            hub.search(tag="time-series-forecasting")
+            hub.search(repo_type="dataset", data_format="csv")
         """
         params: dict = {}
         if library:
@@ -222,6 +226,10 @@ class ModelHub:
             params["metric"] = metric
         if max_metric is not None:
             params["max_metric"] = max_metric
+        if repo_type:
+            params["repo_type"] = repo_type
+        if data_format:
+            params["data_format"] = data_format
         params["limit"] = limit
 
         url = f"{self.endpoint}/api/v1/repos/search"
@@ -247,6 +255,8 @@ class ModelHub:
                 best_metric_value=item.get("best_metric_value"),
                 revision=item.get("revision"),
                 updated_at=item.get("updated_at"),
+                repo_type=item.get("repo_type", "model"),
+                data_format=item.get("data_format"),
             )
             for item in resp.json()
         ]

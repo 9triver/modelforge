@@ -16,9 +16,11 @@ console = Console()
 user_app = typer.Typer(help="用户管理")
 token_app = typer.Typer(help="Token 管理")
 repo_app = typer.Typer(help="仓库管理（直接读 SQLite，不走 HTTP API）")
+dataset_app = typer.Typer(help="数据集管理")
 app.add_typer(user_app, name="user")
 app.add_typer(token_app, name="token")
 app.add_typer(repo_app, name="repo")
+app.add_typer(dataset_app, name="dataset")
 
 
 # ---------- serve ----------
@@ -280,6 +282,128 @@ def run(
     else:
         console.print(f"[red]task '{task}' 的 CLI run 尚未支持[/red]")
         raise typer.Exit(1)
+
+
+# ---------- dataset ----------
+
+@dataset_app.command("upload")
+def dataset_upload(
+    repo: str = typer.Argument(..., help="仓库名 'namespace/name'，如 chun/jiangsu-load-2024"),
+    path: str = typer.Argument(..., help="数据文件或目录（CSV / Parquet / ImageFolder 目录）"),
+    license: str = typer.Option("mit", "--license", "-l"),
+    format: str = typer.Option(None, "--format", "-f", help="csv / parquet / image_folder（默认自动检测）"),
+    tags: str = typer.Option("", "--tags", "-t", help="逗号分隔的标签"),
+    task_categories: str = typer.Option("", "--task", help="逗号分隔的 task_categories"),
+    message: str = typer.Option(None, "--message", "-m", help="commit 信息"),
+    endpoint: str = typer.Option(None, "--endpoint", envvar="MODELFORGE_URL"),
+    token: str = typer.Option(None, "--token", envvar="MODELFORGE_TOKEN"),
+):
+    """上传数据集到 ModelForge。
+
+    自动生成 Dataset Card（README.md），创建仓库并推送。
+
+    Examples:
+        modelforge dataset upload chun/jiangsu-load-2024 ./data.csv
+        modelforge dataset upload chun/cifar10-subset ./images/ -f image_folder -t cifar10
+    """
+    import shutil
+    import tempfile
+    from pathlib import Path as P
+
+    from .client import ModelHub
+
+    src = P(path).resolve()
+    if not src.exists():
+        console.print(f"[red]路径不存在：{src}[/red]")
+        raise typer.Exit(1)
+
+    data_format = format
+    if not data_format:
+        if src.is_dir():
+            data_format = "image_folder"
+        elif src.suffix.lower() in (".csv", ".tsv"):
+            data_format = "csv"
+        elif src.suffix.lower() == ".parquet":
+            data_format = "parquet"
+        else:
+            console.print(f"[red]无法自动检测格式，请用 --format 指定[/red]")
+            raise typer.Exit(1)
+
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+    task_list = [t.strip() for t in task_categories.split(",") if t.strip()]
+
+    staging = P(tempfile.mkdtemp(prefix="mf_ds_upload_"))
+    try:
+        lines = [
+            "---",
+            "repo_type: dataset",
+            f"license: {license}",
+            f"data_format: {data_format}",
+        ]
+        if task_list:
+            lines.append("task_categories:")
+            for tc in task_list:
+                lines.append(f"  - {tc}")
+        if tag_list:
+            lines.append("tags:")
+            for tg in tag_list:
+                lines.append(f"  - {tg}")
+        lines.append("---")
+        ns, nm = _split_repo(repo)
+        lines.append(f"# {ns}/{nm}")
+        lines.append("")
+        (staging / "README.md").write_text("\n".join(lines), encoding="utf-8")
+
+        if src.is_dir():
+            for child in src.iterdir():
+                dest = staging / child.name
+                if child.is_dir():
+                    shutil.copytree(child, dest)
+                else:
+                    shutil.copy2(child, dest)
+        else:
+            shutil.copy2(src, staging / src.name)
+
+        ep = endpoint or "http://127.0.0.1:8000"
+        hub = ModelHub(ep, token=token)
+        msg = message or f"Upload dataset: {data_format}"
+        sha = hub.upload_folder(repo, staging, msg)
+        console.print(f"[green]✓ 数据集已上传[/green]: {repo} ({sha[:8]})")
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+@dataset_app.command("list")
+def dataset_list(
+    format: str = typer.Option(None, "--format", "-f", help="按 data_format 过滤"),
+    endpoint: str = typer.Option(None, "--endpoint", envvar="MODELFORGE_URL"),
+    token: str = typer.Option(None, "--token", envvar="MODELFORGE_TOKEN"),
+):
+    """列出平台上的数据集仓库。"""
+    from .client import ModelHub
+
+    ep = endpoint or "http://127.0.0.1:8000"
+    hub = ModelHub(ep, token=token)
+    params: dict = {"repo_type": "dataset"}
+    if format:
+        params["data_format"] = format
+    results = hub.search(**params)
+    if not results:
+        console.print("[dim]无数据集[/dim]")
+        return
+    table = Table(title="Datasets")
+    table.add_column("Repo")
+    table.add_column("Format")
+    table.add_column("License")
+    table.add_column("Tags")
+    for r in results:
+        table.add_row(
+            r.full_name,
+            getattr(r, "data_format", None) or "—",
+            r.license or "—",
+            ", ".join(r.tags[:3]) if r.tags else "—",
+        )
+    console.print(table)
 
 
 if __name__ == "__main__":

@@ -137,11 +137,10 @@ async def create_evaluation(
             ds_workdir, ds_path, _ = repo_reader.resolve_dataset_repo(dataset_repo, "main")
         except (ValueError, FileNotFoundError) as e:
             raise HTTPException(400, str(e))
-        payload = ds_path.read_bytes() if ds_path.is_file() else None
-        ds_name = ds_path.name if ds_path.is_file() else "dataset"
-        if payload is None:
-            import shutil
-            import tempfile
+        if ds_path.is_file():
+            payload = ds_path.read_bytes()
+            ds_name = ds_path.name
+        else:
             zip_path = Path(tempfile.mktemp(suffix=".zip"))
             shutil.make_archive(str(zip_path).removesuffix(".zip"), "zip", str(ds_path))
             payload = zip_path.read_bytes()
