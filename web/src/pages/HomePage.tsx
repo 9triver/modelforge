@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { getFacets, listRepos, searchRepos } from '../lib/api';
+import { getFacets, searchRepos } from '../lib/api';
 import type { Facets, SearchResult } from '../lib/types';
 import FacetFilter from '../components/FacetFilter';
 import RepoCard from '../components/RepoCard';
@@ -21,45 +21,22 @@ export default function HomePage() {
     getFacets().then(setFacets).catch((e) => console.warn('facets', e));
   }, []);
 
-  const hasFilter = library || task || tag || maxMape || repoType || dataFormat;
-
   useEffect(() => {
     setLoading(true);
     setError(null);
-    const promise = hasFilter
-      ? searchRepos({
-          library: library || undefined,
-          pipeline_tag: task || undefined,
-          tag: tag || undefined,
-          max_metric: maxMape ? parseFloat(maxMape) : undefined,
-          metric: maxMape ? 'mape' : undefined,
-          repo_type: repoType || undefined,
-          data_format: dataFormat || undefined,
-        })
-      : listRepos().then((rows) =>
-          rows.map((r) => ({
-            namespace: r.namespace,
-            name: r.name,
-            full_name: r.full_name,
-            owner: r.owner,
-            library_name: null,
-            pipeline_tag: null,
-            license: null,
-            tags: [],
-            base_model: null,
-            best_metric_name: null,
-            best_metric_value: null,
-            revision: null,
-            updated_at: r.created_at,
-            repo_type: 'model',
-            data_format: null,
-          }))
-        );
-    promise
+    searchRepos({
+      library: library || undefined,
+      pipeline_tag: task || undefined,
+      tag: tag || undefined,
+      max_metric: maxMape ? parseFloat(maxMape) : undefined,
+      metric: maxMape ? 'mape' : undefined,
+      repo_type: repoType || undefined,
+      data_format: dataFormat || undefined,
+    })
       .then(setRepos)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [library, task, tag, maxMape, repoType, dataFormat, hasFilter]);
+  }, [library, task, tag, maxMape, repoType, dataFormat]);
 
   const filtered = useMemo(() => {
     if (!query) return repos;
