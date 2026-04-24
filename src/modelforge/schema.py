@@ -20,6 +20,8 @@
 """
 from __future__ import annotations
 
+from typing import Literal
+
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -64,6 +66,33 @@ class ModelCardMetadata(BaseModel):
 
     # model-index 是 HF 的结构化性能指标（YAML 键带连字符）
     model_index: list[dict] | None = Field(default=None, alias="model-index")
+
+
+class DatasetCardMetadata(BaseModel):
+    """Dataset Card YAML frontmatter。
+
+    跟 ModelCardMetadata 共用 license，但不要求 library_name。
+    """
+
+    model_config = ConfigDict(
+        extra="allow",
+        populate_by_name=True,
+        protected_namespaces=(),
+    )
+
+    repo_type: Literal["dataset"]
+    license: str = Field(
+        ...,
+        description="SPDX 许可证标识",
+        min_length=1,
+    )
+    task_categories: list[str] = Field(default_factory=list)
+    size_category: str | None = None
+    data_format: str | None = Field(
+        None,
+        description="数据格式：csv | parquet | image_folder | coco_json",
+    )
+    tags: list[str] = Field(default_factory=list)
 
 
 class ModelCardError(Exception):
@@ -116,14 +145,18 @@ def parse_frontmatter(content: str) -> tuple[dict, str]:
     return data, body
 
 
-def validate_model_card(content: str) -> ModelCardMetadata:
-    """解析并校验 README.md。失败抛 ModelCardError 带友好信息。"""
-    metadata_dict, _body = parse_frontmatter(content)
+def validate_model_card(content: str) -> ModelCardMetadata | DatasetCardMetadata:
+    """解析并校验 README.md。失败抛 ModelCardError 带友好信息。
 
+    按 repo_type 分发：dataset 走 DatasetCardMetadata，其余走 ModelCardMetadata。
+    """
+    metadata_dict, _body = parse_frontmatter(content)
+    repo_type = metadata_dict.get("repo_type", "model")
+
+    cls = DatasetCardMetadata if repo_type == "dataset" else ModelCardMetadata
     try:
-        return ModelCardMetadata(**metadata_dict)
+        return cls(**metadata_dict)
     except ValidationError as e:
-        # Pydantic 错误格式化，给用户看
         lines = ["README.md 的 YAML frontmatter 校验失败："]
         for err in e.errors():
             loc = ".".join(str(x) for x in err["loc"])

@@ -93,6 +93,7 @@ def _persist_card(namespace: str, name: str, sha: str, metadata: dict) -> None:
 
     metric_name, metric_value = _extract_best_metric(metadata.get("model-index"))
     tags = metadata.get("tags") or []
+    repo_type = metadata.get("repo_type", "model")
     card = db.RepoCard(
         repo_id=repo.id,
         revision=sha,
@@ -104,6 +105,8 @@ def _persist_card(namespace: str, name: str, sha: str, metadata: dict) -> None:
         best_metric_name=metric_name,
         best_metric_value=metric_value,
         updated_at=datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        repo_type=repo_type,
+        data_format=metadata.get("data_format"),
     )
     db.upsert_repo_card(card)
 

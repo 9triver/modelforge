@@ -115,9 +115,15 @@ async def create_evaluation(
     namespace: str,
     name: str,
     bg: BackgroundTasks,
-    dataset: UploadFile,
+    dataset: UploadFile | None = None,
     revision: str = Query("main"),
+    dataset_repo: str | None = Query(None, description="已有 dataset 仓库（namespace/name）"),
 ):
+    if not dataset and not dataset_repo:
+        raise HTTPException(400, "必须上传数据文件或指定 dataset_repo")
+    if dataset and dataset_repo:
+        raise HTTPException(400, "dataset 和 dataset_repo 不能同时指定")
+
     repo = db.get_repo(namespace, name)
     if not repo:
         raise HTTPException(404, f"Repository '{namespace}/{name}' not found")
@@ -126,8 +132,25 @@ async def create_evaluation(
     if not metadata.pipeline_tag:
         raise HTTPException(400, "model_card.yaml 必须声明 pipeline_tag")
 
-    payload = await dataset.read()
-    ds_name = Path(dataset.filename or "data.bin").name
+    if dataset_repo:
+        try:
+            ds_workdir, ds_path, _ = repo_reader.resolve_dataset_repo(dataset_repo, "main")
+        except (ValueError, FileNotFoundError) as e:
+            raise HTTPException(400, str(e))
+        payload = ds_path.read_bytes() if ds_path.is_file() else None
+        ds_name = ds_path.name if ds_path.is_file() else "dataset"
+        if payload is None:
+            import shutil
+            import tempfile
+            zip_path = Path(tempfile.mktemp(suffix=".zip"))
+            shutil.make_archive(str(zip_path).removesuffix(".zip"), "zip", str(ds_path))
+            payload = zip_path.read_bytes()
+            ds_name = zip_path.name
+            zip_path.unlink(missing_ok=True)
+        shutil.rmtree(ds_workdir, ignore_errors=True)
+    else:
+        payload = await dataset.read()
+        ds_name = Path(dataset.filename or "data.bin").name
 
     record = db.create_evaluation(repo.id, sha, metadata.pipeline_tag)
     bg.add_task(_run_evaluation, record.id, namespace, name, sha, payload, ds_name)

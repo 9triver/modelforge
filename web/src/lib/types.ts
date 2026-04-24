@@ -22,6 +22,8 @@ export interface SearchResult {
   best_metric_value: number | null;
   revision: string | null;
   updated_at: string | null;
+  repo_type: string;
+  data_format: string | null;
 }
 
 export interface FileItem {
@@ -58,6 +60,8 @@ export interface Facets {
   tasks: string[];
   licenses: string[];
   tags: string[];
+  repo_types: string[];
+  data_formats: string[];
 }
 
 export interface AggregateMetrics {
@@ -121,4 +125,20 @@ export interface TransferRecord {
   duration_ms: number | null;
   error: string | null;
   created_at: string;
+}
+
+export interface CsvPreview {
+  columns: string[];
+  rows: string[][];
+  total_rows: number;
+}
+
+export interface ImagePreviewClass {
+  name: string;
+  count: number;
+  samples: { path: string; thumbnail_b64: string }[];
+}
+
+export interface ImagePreview {
+  classes: ImagePreviewClass[];
 }

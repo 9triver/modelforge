@@ -168,6 +168,8 @@ class RepoCard:
     best_metric_name: str | None
     best_metric_value: float | None
     updated_at: str
+    repo_type: str = "model"
+    data_format: str | None = None
 
 
 @dataclass
@@ -261,6 +263,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     _ensure_column("transfers", "hparams_json", "hparams_json TEXT")
     _ensure_column("transfers", "current_epoch", "current_epoch INTEGER")
     _ensure_column("transfers", "total_epochs", "total_epochs INTEGER")
+    _ensure_column("repo_cards", "repo_type", "repo_type TEXT DEFAULT 'model'")
+    _ensure_column("repo_cards", "data_format", "data_format TEXT")
 
 
 # ---------- 用户 ----------
@@ -372,8 +376,9 @@ def upsert_repo_card(card: RepoCard) -> None:
             """
             INSERT INTO repo_cards
                 (repo_id, revision, library_name, pipeline_tag, license,
-                 tags_json, base_model, best_metric_name, best_metric_value, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 tags_json, base_model, best_metric_name, best_metric_value,
+                 updated_at, repo_type, data_format)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(repo_id) DO UPDATE SET
                 revision = excluded.revision,
                 library_name = excluded.library_name,
@@ -383,12 +388,15 @@ def upsert_repo_card(card: RepoCard) -> None:
                 base_model = excluded.base_model,
                 best_metric_name = excluded.best_metric_name,
                 best_metric_value = excluded.best_metric_value,
-                updated_at = excluded.updated_at
+                updated_at = excluded.updated_at,
+                repo_type = excluded.repo_type,
+                data_format = excluded.data_format
             """,
             (
                 card.repo_id, card.revision, card.library_name, card.pipeline_tag,
                 card.license, card.tags_json, card.base_model,
                 card.best_metric_name, card.best_metric_value, card.updated_at,
+                card.repo_type, card.data_format,
             ),
         )
 
@@ -406,13 +414,16 @@ def search_repos(
     tag: str | None = None,             # 单个 tag 子串匹配 tags_json
     max_metric: float | None = None,    # best_metric_value <= max_metric
     metric_name: str | None = None,     # 限定指标名（如 'mape'）
+    repo_type: str | None = None,
+    data_format: str | None = None,
     limit: int = 100,
 ) -> list[tuple[Repo, RepoCard | None]]:
     """组合条件搜索仓库。返回 (repo, card) 列表。"""
     sql = """
         SELECT r.*, c.repo_id AS c_repo_id, c.revision, c.library_name, c.pipeline_tag,
                c.license, c.tags_json, c.base_model,
-               c.best_metric_name, c.best_metric_value, c.updated_at
+               c.best_metric_name, c.best_metric_value, c.updated_at,
+               c.repo_type, c.data_format
         FROM repos r
         LEFT JOIN repo_cards c ON r.id = c.repo_id
         WHERE 1=1
@@ -436,6 +447,12 @@ def search_repos(
     if metric_name:
         sql += " AND c.best_metric_name = ?"
         args.append(metric_name)
+    if repo_type:
+        sql += " AND COALESCE(c.repo_type, 'model') = ?"
+        args.append(repo_type)
+    if data_format:
+        sql += " AND c.data_format = ?"
+        args.append(data_format)
     sql += " ORDER BY r.namespace, r.name LIMIT ?"
     args.append(limit)
 
@@ -455,6 +472,8 @@ def search_repos(
                 best_metric_name=r["best_metric_name"],
                 best_metric_value=r["best_metric_value"],
                 updated_at=r["updated_at"],
+                repo_type=r["repo_type"] or "model",
+                data_format=r["data_format"],
             )
         out.append((repo, card))
     return out

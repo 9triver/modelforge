@@ -271,13 +271,19 @@ async def preview_transfer(
     namespace: str,
     name: str,
     bg: BackgroundTasks,
-    dataset: UploadFile,
+    dataset: UploadFile | None = None,
     revision: str = Query("main"),
     method: str = Query("linear_probe"),
     epochs: int = Query(10),
     lr: float = Query(1e-5),
     unfreeze_layers: int = Query(2),
+    dataset_repo: str | None = Query(None, description="已有 dataset 仓库（namespace/name）"),
 ):
+    if not dataset and not dataset_repo:
+        raise HTTPException(400, "必须上传数据文件或指定 dataset_repo")
+    if dataset and dataset_repo:
+        raise HTTPException(400, "dataset 和 dataset_repo 不能同时指定")
+
     repo = db.get_repo(namespace, name)
     if not repo:
         raise HTTPException(404, f"Repository '{namespace}/{name}' not found")
@@ -287,8 +293,23 @@ async def preview_transfer(
         raise HTTPException(400, f"Revision '{revision}' not found")
 
     hparams = {"epochs": epochs, "lr": lr, "unfreeze_layers": unfreeze_layers}
-    payload = await dataset.read()
-    ds_name = Path(dataset.filename or "data.zip").name
+
+    if dataset_repo:
+        try:
+            ds_workdir, ds_path, _ = repo_reader.resolve_dataset_repo(dataset_repo, "main")
+        except (ValueError, FileNotFoundError) as e:
+            raise HTTPException(400, str(e))
+        import shutil as _shutil
+        zip_path = Path(tempfile.mktemp(suffix=".zip"))
+        _shutil.make_archive(str(zip_path).removesuffix(".zip"), "zip", str(ds_path))
+        payload = zip_path.read_bytes()
+        ds_name = zip_path.name
+        zip_path.unlink(missing_ok=True)
+        _shutil.rmtree(ds_workdir, ignore_errors=True)
+    else:
+        payload = await dataset.read()
+        ds_name = Path(dataset.filename or "data.zip").name
+
     record = db.create_transfer(repo.id, sha, method)
     bg.add_task(_run_transfer_preview, record.id, namespace, name, sha, payload, ds_name, method, hparams)
     return TransferCreated(transfer_id=record.id, status="queued")

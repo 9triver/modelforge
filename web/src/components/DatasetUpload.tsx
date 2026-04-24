@@ -1,19 +1,30 @@
 import { useRef, useState, type DragEvent } from 'react';
+import type { SearchResult } from '../lib/types';
 
 type Props = {
   onFile: (f: File) => void;
+  onDatasetRepo?: (repo: string) => void;
+  datasetRepos?: SearchResult[];
   disabled?: boolean;
   hint: string;
 };
 
-export default function DatasetUpload({ onFile, disabled, hint }: Props) {
+export default function DatasetUpload({ onFile, onDatasetRepo, datasetRepos, disabled, hint }: Props) {
   const [drag, setDrag] = useState(false);
   const [file, setFile] = useState<File | null>(null);
+  const [selectedRepo, setSelectedRepo] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
   const pick = (f: File) => {
     setFile(f);
+    setSelectedRepo('');
     onFile(f);
+  };
+
+  const pickRepo = (repo: string) => {
+    setSelectedRepo(repo);
+    setFile(null);
+    onDatasetRepo?.(repo);
   };
 
   const handleDrop = (e: DragEvent<HTMLDivElement>) => {
@@ -25,7 +36,7 @@ export default function DatasetUpload({ onFile, disabled, hint }: Props) {
   };
 
   return (
-    <div>
+    <div className="space-y-2">
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -50,6 +61,11 @@ export default function DatasetUpload({ onFile, disabled, hint }: Props) {
               {(file.size / 1024 / 1024).toFixed(2)} MB
             </div>
           </div>
+        ) : selectedRepo ? (
+          <div>
+            <div className="font-medium text-gray-900">{selectedRepo}</div>
+            <div className="text-xs text-gray-500 mt-1">已选择 dataset 仓库</div>
+          </div>
         ) : (
           <div>
             <div className="text-sm font-medium">拖拽文件到此，或点击选择</div>
@@ -67,6 +83,24 @@ export default function DatasetUpload({ onFile, disabled, hint }: Props) {
           }}
         />
       </div>
+      {datasetRepos && datasetRepos.length > 0 && onDatasetRepo && (
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-gray-500">或选择已有数据集：</span>
+          <select
+            value={selectedRepo}
+            disabled={disabled}
+            onChange={(e) => { if (e.target.value) pickRepo(e.target.value); }}
+            className="border border-gray-300 rounded px-2 py-1 text-sm flex-1"
+          >
+            <option value="">-- 选择 --</option>
+            {datasetRepos.map((r) => (
+              <option key={r.full_name} value={r.full_name}>
+                {r.full_name}{r.data_format ? ` (${r.data_format})` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
     </div>
   );
 }

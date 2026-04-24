@@ -1,18 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
-import { getEvaluation, postEvaluation } from '../lib/api';
-import type { Evaluation } from '../lib/types';
+import { getEvaluation, listDatasetRepos, postEvaluation } from '../lib/api';
+import type { Evaluation, SearchResult } from '../lib/types';
 import DatasetUpload from './DatasetUpload';
 import EvaluationStatus from './EvaluationStatus';
 
-const SUPPORTED: Record<string, { hint: string }> = {
+const SUPPORTED: Record<string, { hint: string; formats: string[] }> = {
   'time-series-forecasting': {
     hint: 'CSV / Parquet — 必含 timestamp 列 + model card 声明的 target/features',
+    formats: ['csv', 'parquet'],
   },
   'image-classification': {
     hint: 'ZIP — ImageFolder 结构（每个类别一个子目录，子目录里放图片）',
+    formats: ['image_folder'],
   },
   'object-detection': {
     hint: 'ZIP — 含 images/ 目录 + annotations.json（COCO 格式）',
+    formats: ['coco_json'],
   },
 };
 
@@ -27,6 +30,8 @@ type Props = {
 
 export default function EvaluateTab({ namespace, name, revision, task, onDone, onCalibrate }: Props) {
   const [file, setFile] = useState<File | null>(null);
+  const [datasetRepo, setDatasetRepo] = useState<string | null>(null);
+  const [datasetRepos, setDatasetRepos] = useState<SearchResult[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [evalRec, setEvalRec] = useState<Evaluation | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -36,10 +41,16 @@ export default function EvaluateTab({ namespace, name, revision, task, onDone, o
   const hint = task && supported ? SUPPORTED[task].hint : '';
 
   useEffect(() => {
+    if (task && supported) {
+      const formats = SUPPORTED[task].formats;
+      Promise.all(formats.map((f) => listDatasetRepos(f)))
+        .then((results) => setDatasetRepos(results.flat()))
+        .catch(() => {});
+    }
     return () => {
       if (pollRef.current != null) clearInterval(pollRef.current);
     };
-  }, []);
+  }, [task, supported]);
 
   const startPolling = (id: number) => {
     if (pollRef.current != null) clearInterval(pollRef.current);
@@ -61,11 +72,11 @@ export default function EvaluateTab({ namespace, name, revision, task, onDone, o
   };
 
   const run = async () => {
-    if (!file) return;
+    if (!file && !datasetRepo) return;
     setSubmitError(null);
     setSubmitting(true);
     try {
-      const { evaluation_id } = await postEvaluation(namespace, name, file, revision);
+      const { evaluation_id } = await postEvaluation(namespace, name, file, revision, datasetRepo || undefined);
       const rec = await getEvaluation(evaluation_id);
       setEvalRec(rec);
       startPolling(evaluation_id);
@@ -83,6 +94,7 @@ export default function EvaluateTab({ namespace, name, revision, task, onDone, o
     }
     setEvalRec(null);
     setFile(null);
+    setDatasetRepo(null);
     setSubmitError(null);
   };
 
@@ -118,7 +130,13 @@ export default function EvaluateTab({ namespace, name, revision, task, onDone, o
 
   return (
     <div className="space-y-4">
-      <DatasetUpload onFile={setFile} disabled={submitting} hint={hint} />
+      <DatasetUpload
+        onFile={(f) => { setFile(f); setDatasetRepo(null); }}
+        onDatasetRepo={(r) => { setDatasetRepo(r); setFile(null); }}
+        datasetRepos={datasetRepos}
+        disabled={submitting}
+        hint={hint}
+      />
 
       <div className="flex items-center justify-between text-sm">
         <div className="text-gray-600 space-x-3">
@@ -126,7 +144,7 @@ export default function EvaluateTab({ namespace, name, revision, task, onDone, o
           <span>Revision: <code className="bg-gray-100 px-1 rounded">{revision}</code></span>
         </div>
         <button
-          disabled={!file || submitting}
+          disabled={(!file && !datasetRepo) || submitting}
           onClick={run}
           className="px-4 py-2 rounded bg-blue-600 text-white text-sm font-medium disabled:bg-gray-300"
         >

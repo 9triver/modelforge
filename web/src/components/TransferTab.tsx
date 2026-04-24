@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { getTransfer, postTransferPreview, saveTransfer } from '../lib/api';
-import type { TransferRecord } from '../lib/types';
+import { getTransfer, listDatasetRepos, postTransferPreview, saveTransfer } from '../lib/api';
+import type { SearchResult, TransferRecord } from '../lib/types';
 import DatasetUpload from './DatasetUpload';
 
 function fmt(v: number | null | undefined): string {
@@ -25,6 +25,8 @@ type Props = {
 
 export default function TransferTab({ namespace, name, revision, task }: Props) {
   const [file, setFile] = useState<File | null>(null);
+  const [datasetRepo, setDatasetRepo] = useState<string | null>(null);
+  const [datasetRepos, setDatasetRepos] = useState<SearchResult[]>([]);
   const [method, setMethod] = useState<MethodId>('linear_probe');
   const [epochs, setEpochs] = useState(10);
   const [lr, setLr] = useState(1e-5);
@@ -48,6 +50,10 @@ export default function TransferTab({ namespace, name, revision, task }: Props) 
 
   useEffect(() => {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, []);
+
+  useEffect(() => {
+    listDatasetRepos('image_folder').then(setDatasetRepos).catch(() => {});
   }, []);
   if (task !== 'image-classification') {
     return (
@@ -73,14 +79,14 @@ export default function TransferTab({ namespace, name, revision, task }: Props) 
   };
 
   const runPreview = async () => {
-    if (!file) return;
+    if (!file && !datasetRepo) return;
     setSubmitError(null);
     setSubmitting(true);
     setRec(null);
     setSavedRec(null);
     try {
       const hparams = needsHparams ? { epochs, lr, unfreeze_layers: unfreezeL } : {};
-      const { transfer_id } = await postTransferPreview(namespace, name, file, revision, method, hparams);
+      const { transfer_id } = await postTransferPreview(namespace, name, file, revision, method, hparams, datasetRepo || undefined);
       const r = await getTransfer(transfer_id);
       setRec(r);
       pollOne(transfer_id);
@@ -272,14 +278,18 @@ export default function TransferTab({ namespace, name, revision, task }: Props) 
         </div>
       )}
 
-      <DatasetUpload onFile={setFile} disabled={submitting}
+      <DatasetUpload
+        onFile={(f) => { setFile(f); setDatasetRepo(null); }}
+        onDatasetRepo={(r) => { setDatasetRepo(r); setFile(null); }}
+        datasetRepos={datasetRepos}
+        disabled={submitting}
         hint="ZIP — ImageFolder 格式（class_name/xxx.jpg），每类至少 4 张" />
 
       <div className="flex items-center justify-between text-sm">
         <span className="text-gray-600">
           Revision: <code className="bg-gray-100 px-1 rounded">{revision}</code>
         </span>
-        <button disabled={!file || submitting} onClick={runPreview}
+        <button disabled={(!file && !datasetRepo) || submitting} onClick={runPreview}
           className="px-4 py-2 rounded bg-blue-600 text-white text-sm font-medium disabled:bg-gray-300">
           {submitting ? '提交中…' : 'Preview transfer'}
         </button>

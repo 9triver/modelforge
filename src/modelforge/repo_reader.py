@@ -200,3 +200,64 @@ def list_refs(namespace: str, name: str) -> dict[str, list[str]]:
         elif line.startswith("refs/tags/"):
             tags.append(line.removeprefix("refs/tags/"))
     return {"branches": branches, "tags": tags}
+
+
+def resolve_dataset_repo(
+    dataset_repo: str,
+    revision: str = "main",
+) -> tuple[Path, Path, str]:
+    """Checkout dataset 仓库并返回 (workdir, data_file_path, data_format)。
+
+    读 README.md 的 data_format 字段决定如何找数据文件。
+    返回的 workdir 需要 caller 负责清理。
+    """
+    import glob as glob_mod
+    import tempfile
+
+    from .schema import parse_frontmatter
+
+    parts = dataset_repo.split("/", 1)
+    if len(parts) != 2:
+        raise ValueError(f"dataset_repo 格式错误：'{dataset_repo}'，应为 'namespace/name'")
+    ns, nm = parts
+
+    sha = resolve_revision(ns, nm, revision)
+    readme = read_file(ns, nm, sha, "README.md")
+    if not readme:
+        raise FileNotFoundError(f"Dataset repo '{dataset_repo}' 缺少 README.md")
+
+    metadata, _ = parse_frontmatter(readme)
+    if metadata.get("repo_type") != "dataset":
+        raise ValueError(f"'{dataset_repo}' 不是 dataset 仓库（repo_type={metadata.get('repo_type', 'model')}）")
+
+    data_format = metadata.get("data_format", "csv")
+
+    workdir = Path(tempfile.mkdtemp(prefix="mf_ds_"))
+    checkout_to_dir(ns, nm, sha, workdir)
+    materialize_lfs(workdir)
+
+    _FORMAT_GLOBS = {
+        "csv": ["*.csv", "*.tsv"],
+        "parquet": ["*.parquet"],
+        "image_folder": [],
+        "coco_json": ["*.json"],
+    }
+    globs = _FORMAT_GLOBS.get(data_format, ["*"])
+
+    if data_format == "image_folder":
+        return workdir, workdir, data_format
+
+    for pattern in globs:
+        matches = sorted(glob_mod.glob(str(workdir / pattern)))
+        if matches:
+            return workdir, Path(matches[0]), data_format
+
+    for pattern in globs:
+        matches = sorted(glob_mod.glob(str(workdir / "**" / pattern), recursive=True))
+        non_readme = [m for m in matches if not m.endswith("README.md")]
+        if non_readme:
+            return workdir, Path(non_readme[0]), data_format
+
+    raise FileNotFoundError(
+        f"Dataset repo '{dataset_repo}' 中未找到 {data_format} 格式的数据文件"
+    )

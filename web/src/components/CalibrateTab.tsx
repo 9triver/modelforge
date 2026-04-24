@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { getCalibration, postCalibrationPreview, saveCalibration } from '../lib/api';
-import type { CalibrationRecord } from '../lib/types';
+import { getCalibration, listDatasetRepos, postCalibrationPreview, saveCalibration } from '../lib/api';
+import type { CalibrationRecord, SearchResult } from '../lib/types';
 import DatasetUpload from './DatasetUpload';
 
 function fmt(v: number | null | undefined): string {
@@ -36,6 +36,8 @@ type Props = {
 
 export default function CalibrateTab({ namespace, name, revision, task }: Props) {
   const [file, setFile] = useState<File | null>(null);
+  const [datasetRepo, setDatasetRepo] = useState<string | null>(null);
+  const [datasetRepos, setDatasetRepos] = useState<SearchResult[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -61,6 +63,10 @@ export default function CalibrateTab({ namespace, name, revision, task }: Props)
     return () => { pollRefs.current.forEach((t) => clearInterval(t)); };
   }, []);
 
+  useEffect(() => {
+    listDatasetRepos('csv').then(setDatasetRepos).catch(() => {});
+  }, []);
+
   if (task !== 'time-series-forecasting') {
     return (
       <div className="bg-yellow-50 text-yellow-800 p-4 rounded text-sm">
@@ -84,7 +90,7 @@ export default function CalibrateTab({ namespace, name, revision, task }: Props)
   };
 
   const runPreviewAll = async () => {
-    if (!file) return;
+    if (!file && !datasetRepo) return;
     setSubmitError(null);
     setSubmitting(true);
     setResults(new Map());
@@ -93,7 +99,7 @@ export default function CalibrateTab({ namespace, name, revision, task }: Props)
     try {
       for (const m of ALL_METHODS) {
         const { calibration_id } = await postCalibrationPreview(
-          namespace, name, file, revision, m.id,
+          namespace, name, file, revision, m.id, datasetRepo || undefined,
         );
         const rec = await getCalibration(calibration_id);
         setResults((prev) => new Map(prev).set(m.id, rec));
@@ -293,7 +299,9 @@ export default function CalibrateTab({ namespace, name, revision, task }: Props)
         上传目标区域数据，同时预览三种校准方法的效果，选最好的保存为新模型。
       </div>
       <DatasetUpload
-        onFile={setFile}
+        onFile={(f) => { setFile(f); setDatasetRepo(null); }}
+        onDatasetRepo={(r) => { setDatasetRepo(r); setFile(null); }}
+        datasetRepos={datasetRepos}
         disabled={submitting}
         hint="CSV / Parquet — 目标区域数据（timestamp + target 列，建议 1-2 周）"
       />
@@ -302,7 +310,7 @@ export default function CalibrateTab({ namespace, name, revision, task }: Props)
           Revision: <code className="bg-gray-100 px-1 rounded">{revision}</code>
         </span>
         <button
-          disabled={!file || submitting}
+          disabled={(!file && !datasetRepo) || submitting}
           onClick={runPreviewAll}
           className="px-4 py-2 rounded bg-blue-600 text-white text-sm font-medium disabled:bg-gray-300"
         >

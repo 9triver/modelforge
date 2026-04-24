@@ -129,6 +129,8 @@ class FacetsResponse(BaseModel):
     tasks: list[str]
     licenses: list[str]
     tags: list[str]
+    repo_types: list[str] = []
+    data_formats: list[str] = []
 
 
 @router.get("/facets", response_model=FacetsResponse)
@@ -138,15 +140,20 @@ def facets():
     tasks: set[str] = set()
     licenses: set[str] = set()
     tags: set[str] = set()
+    repo_types: set[str] = set()
+    data_formats: set[str] = set()
     for _repo, card in pairs:
         if not card:
             continue
+        repo_types.add(card.repo_type or "model")
         if card.library_name:
             libraries.add(card.library_name)
         if card.pipeline_tag:
             tasks.add(card.pipeline_tag)
         if card.license:
             licenses.add(card.license)
+        if card.data_format:
+            data_formats.add(card.data_format)
         if card.tags_json:
             try:
                 for t in json.loads(card.tags_json):
@@ -158,4 +165,6 @@ def facets():
         tasks=sorted(tasks),
         licenses=sorted(licenses),
         tags=sorted(tags),
+        repo_types=sorted(repo_types),
+        data_formats=sorted(data_formats),
     )

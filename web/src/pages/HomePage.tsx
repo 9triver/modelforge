@@ -5,11 +5,13 @@ import FacetFilter from '../components/FacetFilter';
 import RepoCard from '../components/RepoCard';
 
 export default function HomePage() {
-  const [facets, setFacets] = useState<Facets>({ libraries: [], tasks: [], licenses: [], tags: [] });
+  const [facets, setFacets] = useState<Facets>({ libraries: [], tasks: [], licenses: [], tags: [], repo_types: [], data_formats: [] });
   const [library, setLibrary] = useState('');
   const [task, setTask] = useState('');
   const [tag, setTag] = useState('');
   const [maxMape, setMaxMape] = useState('');
+  const [repoType, setRepoType] = useState('');
+  const [dataFormat, setDataFormat] = useState('');
   const [query, setQuery] = useState('');
   const [repos, setRepos] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(true);
@@ -19,7 +21,7 @@ export default function HomePage() {
     getFacets().then(setFacets).catch((e) => console.warn('facets', e));
   }, []);
 
-  const hasFilter = library || task || tag || maxMape;
+  const hasFilter = library || task || tag || maxMape || repoType || dataFormat;
 
   useEffect(() => {
     setLoading(true);
@@ -31,6 +33,8 @@ export default function HomePage() {
           tag: tag || undefined,
           max_metric: maxMape ? parseFloat(maxMape) : undefined,
           metric: maxMape ? 'mape' : undefined,
+          repo_type: repoType || undefined,
+          data_format: dataFormat || undefined,
         })
       : listRepos().then((rows) =>
           rows.map((r) => ({
@@ -47,13 +51,15 @@ export default function HomePage() {
             best_metric_value: null,
             revision: null,
             updated_at: r.created_at,
+            repo_type: 'model',
+            data_format: null,
           }))
         );
     promise
       .then(setRepos)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [library, task, tag, maxMape, hasFilter]);
+  }, [library, task, tag, maxMape, repoType, dataFormat, hasFilter]);
 
   const filtered = useMemo(() => {
     if (!query) return repos;
@@ -73,11 +79,15 @@ export default function HomePage() {
         task={task}
         tag={tag}
         maxMape={maxMape}
+        repoType={repoType}
+        dataFormat={dataFormat}
         onChange={(u) => {
           if (u.library !== undefined) setLibrary(u.library);
           if (u.task !== undefined) setTask(u.task);
           if (u.tag !== undefined) setTag(u.tag);
           if (u.maxMape !== undefined) setMaxMape(u.maxMape);
+          if (u.repoType !== undefined) setRepoType(u.repoType);
+          if (u.dataFormat !== undefined) setDataFormat(u.dataFormat);
         }}
       />
       <div className="flex-1 min-w-0">

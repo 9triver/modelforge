@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import __version__
-from .api import calibrations, download, evaluations, git_routes, lfs_routes, preview, repos, transfers
+from .api import calibrations, dataset_preview, download, evaluations, git_routes, lfs_routes, preview, repos, transfers
 from .config import get_settings
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -54,6 +54,7 @@ def create_app() -> FastAPI:
     app.include_router(evaluations.router)
     app.include_router(calibrations.router)
     app.include_router(transfers.router)
+    app.include_router(dataset_preview.router)
     app.include_router(download.router)
     app.include_router(lfs_routes.router)
     app.include_router(git_routes.router)

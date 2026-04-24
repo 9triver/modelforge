@@ -1,8 +1,10 @@
 import type {
   AggregateMetrics,
   CalibrationRecord,
+  CsvPreview,
   Evaluation,
   Facets,
+  ImagePreview,
   Preview,
   RepoSummary,
   SearchResult,
@@ -26,6 +28,8 @@ export function searchRepos(params: {
   tag?: string;
   max_metric?: number;
   metric?: string;
+  repo_type?: string;
+  data_format?: string;
 }): Promise<SearchResult[]> {
   const qs = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => {
@@ -49,13 +53,16 @@ export function getRepoMetrics(namespace: string, name: string): Promise<Aggrega
 export async function postEvaluation(
   namespace: string,
   name: string,
-  dataset: File,
+  dataset: File | null,
   revision = 'main',
+  datasetRepo?: string,
 ): Promise<{ evaluation_id: number; status: string }> {
+  const qs = new URLSearchParams({ revision });
+  if (datasetRepo) qs.set('dataset_repo', datasetRepo);
   const fd = new FormData();
-  fd.append('dataset', dataset);
+  if (dataset) fd.append('dataset', dataset);
   const res = await fetch(
-    `/api/v1/repos/${namespace}/${name}/evaluate?revision=${encodeURIComponent(revision)}`,
+    `/api/v1/repos/${namespace}/${name}/evaluate?${qs}`,
     { method: 'POST', body: fd },
   );
   if (!res.ok) {
@@ -72,14 +79,17 @@ export function getEvaluation(id: number): Promise<Evaluation> {
 export async function postCalibrationPreview(
   namespace: string,
   name: string,
-  dataset: File,
+  dataset: File | null,
   revision = 'main',
   method = 'linear_bias',
+  datasetRepo?: string,
 ): Promise<{ calibration_id: number; status: string }> {
+  const qs = new URLSearchParams({ revision, method });
+  if (datasetRepo) qs.set('dataset_repo', datasetRepo);
   const fd = new FormData();
-  fd.append('dataset', dataset);
+  if (dataset) fd.append('dataset', dataset);
   const res = await fetch(
-    `/api/v1/repos/${namespace}/${name}/calibrate/preview?revision=${encodeURIComponent(revision)}&method=${encodeURIComponent(method)}`,
+    `/api/v1/repos/${namespace}/${name}/calibrate/preview?${qs}`,
     { method: 'POST', body: fd },
   );
   if (!res.ok) {
@@ -113,13 +123,14 @@ export function getCalibration(id: number): Promise<CalibrationRecord> {
 export async function postTransferPreview(
   namespace: string,
   name: string,
-  dataset: File,
+  dataset: File | null,
   revision = 'main',
   method = 'linear_probe',
   hparams: { epochs?: number; lr?: number; unfreeze_layers?: number } = {},
+  datasetRepo?: string,
 ): Promise<{ transfer_id: number; status: string }> {
   const fd = new FormData();
-  fd.append('dataset', dataset);
+  if (dataset) fd.append('dataset', dataset);
   const qs = new URLSearchParams({
     revision,
     method,
@@ -127,6 +138,7 @@ export async function postTransferPreview(
     ...(hparams.lr != null ? { lr: String(hparams.lr) } : {}),
     ...(hparams.unfreeze_layers != null ? { unfreeze_layers: String(hparams.unfreeze_layers) } : {}),
   });
+  if (datasetRepo) qs.set('dataset_repo', datasetRepo);
   const res = await fetch(
     `/api/v1/repos/${namespace}/${name}/transfer/preview?${qs}`,
     { method: 'POST', body: fd },
@@ -170,4 +182,29 @@ export async function deleteRepo(
     const body = await res.text();
     throw new Error(`${res.status} ${res.statusText}: ${body}`);
   }
+}
+
+export function getCsvPreview(
+  namespace: string,
+  name: string,
+  path: string,
+  revision = 'main',
+  limit = 100,
+): Promise<CsvPreview> {
+  const qs = new URLSearchParams({ path, revision, limit: String(limit) });
+  return getJSON(`/api/v1/repos/${namespace}/${name}/preview-csv?${qs}`);
+}
+
+export function getImagePreview(
+  namespace: string,
+  name: string,
+  revision = 'main',
+  limit = 20,
+): Promise<ImagePreview> {
+  const qs = new URLSearchParams({ revision, limit: String(limit) });
+  return getJSON(`/api/v1/repos/${namespace}/${name}/preview-images?${qs}`);
+}
+
+export function listDatasetRepos(dataFormat?: string): Promise<SearchResult[]> {
+  return searchRepos({ repo_type: 'dataset', data_format: dataFormat });
 }

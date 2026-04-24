@@ -235,11 +235,17 @@ async def preview_calibration(
     namespace: str,
     name: str,
     bg: BackgroundTasks,
-    dataset: UploadFile,
+    dataset: UploadFile | None = None,
     revision: str = Query("main"),
     method: str = Query("linear_bias", description="校准方法：linear_bias / segmented / stacking"),
+    dataset_repo: str | None = Query(None, description="已有 dataset 仓库（namespace/name）"),
 ):
     """预览校准效果。不创建任何仓库，只返回 before/after 指标。"""
+    if not dataset and not dataset_repo:
+        raise HTTPException(400, "必须上传数据文件或指定 dataset_repo")
+    if dataset and dataset_repo:
+        raise HTTPException(400, "dataset 和 dataset_repo 不能同时指定")
+
     repo = db.get_repo(namespace, name)
     if not repo:
         raise HTTPException(404, f"Repository '{namespace}/{name}' not found")
@@ -248,8 +254,18 @@ async def preview_calibration(
     except FileNotFoundError:
         raise HTTPException(400, f"Revision '{revision}' not found")
 
-    payload = await dataset.read()
-    ds_name = Path(dataset.filename or "data.csv").name
+    if dataset_repo:
+        try:
+            ds_workdir, ds_path, _ = repo_reader.resolve_dataset_repo(dataset_repo, "main")
+        except (ValueError, FileNotFoundError) as e:
+            raise HTTPException(400, str(e))
+        payload = ds_path.read_bytes()
+        ds_name = ds_path.name
+        shutil.rmtree(ds_workdir, ignore_errors=True)
+    else:
+        payload = await dataset.read()
+        ds_name = Path(dataset.filename or "data.csv").name
+
     record = db.create_calibration(repo.id, sha, method)
     bg.add_task(_run_preview, record.id, namespace, name, sha, payload, ds_name, method)
     return CalibrationCreated(calibration_id=record.id, status="queued")

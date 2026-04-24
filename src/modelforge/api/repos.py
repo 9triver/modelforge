@@ -51,6 +51,8 @@ class RepoSearchResult(BaseModel):
     best_metric_value: float | None = None
     revision: str | None = None
     updated_at: str | None = None
+    repo_type: str = "model"
+    data_format: str | None = None
 
 
 def _to_response(repo: db.Repo, base_url: str = "") -> RepoResponse:
@@ -93,6 +95,8 @@ def search_repos(
     tag: str | None = Query(None, description="tags 中包含该 tag"),
     metric: str | None = Query(None, description="限定指标名（如 'mape'）"),
     max_metric: float | None = Query(None, description="best_metric_value <= max_metric"),
+    repo_type: str | None = Query(None, description="model | dataset"),
+    data_format: str | None = Query(None, description="csv | image_folder | parquet | coco_json"),
     limit: int = Query(100, ge=1, le=500),
 ):
     """按 Model Card 字段组合搜索。
@@ -106,6 +110,8 @@ def search_repos(
         tag=tag,
         max_metric=max_metric,
         metric_name=metric,
+        repo_type=repo_type,
+        data_format=data_format,
         limit=limit,
     )
     out: list[RepoSearchResult] = []
@@ -131,6 +137,8 @@ def search_repos(
             best_metric_value=card.best_metric_value if card else None,
             revision=card.revision if card else None,
             updated_at=card.updated_at if card else None,
+            repo_type=card.repo_type if card else "model",
+            data_format=card.data_format if card else None,
         ))
     return out
 

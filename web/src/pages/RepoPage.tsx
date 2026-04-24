@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { getPreview, getRepoMetrics, deleteRepo } from '../lib/api';
 import type { AggregateMetrics, Preview } from '../lib/types';
 import CalibrateTab from '../components/CalibrateTab';
+import DataPreviewTab from '../components/DataPreviewTab';
 import EvaluateTab from '../components/EvaluateTab';
 import FileList from '../components/FileList';
 import ModelIndexTable from '../components/ModelIndexTable';
@@ -10,7 +11,7 @@ import PerformanceBadge from '../components/PerformanceBadge';
 import TransferTab from '../components/TransferTab';
 import UseModelSnippet from '../components/UseModelSnippet';
 
-type Tab = 'card' | 'files' | 'evaluate' | 'calibrate' | 'transfer';
+type Tab = 'card' | 'files' | 'evaluate' | 'calibrate' | 'transfer' | 'data-preview';
 
 export default function RepoPage() {
   const { namespace = '', name = '' } = useParams();
@@ -21,6 +22,7 @@ export default function RepoPage() {
     tabParam === 'evaluate' ? 'evaluate' :
     tabParam === 'calibrate' ? 'calibrate' :
     tabParam === 'transfer' ? 'transfer' :
+    tabParam === 'data-preview' ? 'data-preview' :
     'card';
   const revision = searchParams.get('revision') || 'main';
 
@@ -56,8 +58,23 @@ export default function RepoPage() {
   if (!preview) return null;
 
   const meta = preview.metadata || {};
+  const isDataset = meta.repo_type === 'dataset';
   const gitUrl = `${window.location.protocol}//${window.location.host}/${preview.full_name}.git`;
   const setTab = (t: Tab) => setSearchParams({ tab: t, revision });
+
+  const tabs: { id: Tab; label: string }[] = isDataset
+    ? [
+        { id: 'card', label: 'Dataset Card' },
+        { id: 'files', label: `Files (${preview.files.length})` },
+        { id: 'data-preview', label: 'Preview' },
+      ]
+    : [
+        { id: 'card', label: 'Model Card' },
+        { id: 'files', label: `Files (${preview.files.length})` },
+        { id: 'evaluate', label: 'Evaluate' },
+        { id: 'calibrate', label: 'Calibrate' },
+        { id: 'transfer', label: 'Transfer' },
+      ];
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-6">
@@ -73,25 +90,17 @@ export default function RepoPage() {
         </div>
 
         <div className="border-b border-gray-200 mb-4 flex gap-1">
-          {(['card', 'files', 'evaluate', 'calibrate', 'transfer'] as const).map((t) => (
+          {tabs.map((t) => (
             <button
-              key={t}
-              onClick={() => setTab(t)}
+              key={t.id}
+              onClick={() => setTab(t.id)}
               className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
-                tab === t
+                tab === t.id
                   ? 'border-blue-600 text-blue-600'
                   : 'border-transparent text-gray-600 hover:text-gray-900'
               }`}
             >
-              {t === 'card'
-                ? 'Model Card'
-                : t === 'files'
-                ? `Files (${preview.files.length})`
-                : t === 'evaluate'
-                ? 'Evaluate'
-                : t === 'calibrate'
-                ? 'Calibrate'
-                : 'Transfer'}
+              {t.label}
             </button>
           ))}
         </div>
@@ -160,6 +169,16 @@ export default function RepoPage() {
             task={meta.pipeline_tag || null}
           />
         )}
+
+        {tab === 'data-preview' && (
+          <DataPreviewTab
+            namespace={namespace}
+            name={name}
+            revision={revision}
+            dataFormat={meta.data_format || null}
+            files={preview.files}
+          />
+        )}
       </div>
 
       <aside className="space-y-4 text-sm">
@@ -168,9 +187,11 @@ export default function RepoPage() {
           <code className="block text-xs bg-gray-50 p-2 rounded break-all">git clone {gitUrl}</code>
         </div>
 
-        {(meta.license || meta.library_name || meta.pipeline_tag) && (
+        {(meta.license || meta.library_name || meta.pipeline_tag || meta.data_format) && (
           <div className="bg-white border border-gray-200 rounded p-4 space-y-2">
-            {meta.library_name && <div><span className="text-gray-500">Library:</span> <span className="font-medium">{meta.library_name}</span></div>}
+            {isDataset && <div><span className="text-gray-500">Type:</span> <span className="font-medium text-purple-700">Dataset</span></div>}
+            {isDataset && meta.data_format && <div><span className="text-gray-500">Format:</span> <span className="font-medium">{meta.data_format}</span></div>}
+            {!isDataset && meta.library_name && <div><span className="text-gray-500">Library:</span> <span className="font-medium">{meta.library_name}</span></div>}
             {meta.pipeline_tag && <div><span className="text-gray-500">Task:</span> <span className="font-medium">{meta.pipeline_tag}</span></div>}
             {meta.license && <div><span className="text-gray-500">License:</span> <span className="font-medium">{meta.license}</span></div>}
             {meta.base_model && <div><span className="text-gray-500">Base:</span> <span className="font-mono text-xs">{meta.base_model}</span></div>}
