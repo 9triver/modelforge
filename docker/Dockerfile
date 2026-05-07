@@ -5,7 +5,7 @@ WORKDIR /app
 COPY pyproject.toml .
 COPY src/ src/
 
-RUN pip install --no-cache-dir ".[serving]"
+RUN pip install --no-cache-dir ".[serving,example]"
 
 ENV MODELFORGE_MODEL_STORE_PATH=/app/data/model_store
 
