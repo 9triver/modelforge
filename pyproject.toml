@@ -40,6 +40,9 @@ example = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"modelforge" = ["web/*"]
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100
