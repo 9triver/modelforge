@@ -187,10 +187,151 @@ def _eval_object_detection(
     return metrics, primary, metrics.get(primary)
 
 
+def _eval_tabular_classification(
+    handler: TaskHandler,
+    dataset_path: str | Path,
+    metadata: ModelCardMetadata,
+) -> tuple[dict, str, float | None]:
+    from .datasets import tabular as tab_ds
+
+    tab_cfg = (metadata.model_extra or {}).get("tabular", {})
+    target_col = tab_cfg.get("target")
+    if not target_col:
+        raise ValueError("model_card.yaml 的 tabular.target 未声明")
+    required = (tab_cfg.get("features") or {}).get("required") or []
+
+    features_df, labels = tab_ds.load_tabular_csv(
+        dataset_path, target_col=target_col, required_features=required,
+    )
+    predictions = handler.predict(features_df)
+
+    if len(predictions) != len(labels):
+        raise ValueError(
+            f"handler 返回 {len(predictions)} 条预测，与输入 {len(labels)} 行不匹配"
+        )
+
+    metrics = cls_metrics.compute_all(labels, predictions)
+    primary = "accuracy"
+    return metrics, primary, metrics.get(primary)
+
+
+def _eval_tabular_regression(
+    handler: TaskHandler,
+    dataset_path: str | Path,
+    metadata: ModelCardMetadata,
+) -> tuple[dict, str, float | None]:
+    from .datasets import tabular as tab_ds
+    from .metrics import regression as reg_metrics
+
+    tab_cfg = (metadata.model_extra or {}).get("tabular", {})
+    target_col = tab_cfg.get("target")
+    if not target_col:
+        raise ValueError("model_card.yaml 的 tabular.target 未声明")
+    required = (tab_cfg.get("features") or {}).get("required") or []
+
+    features_df, labels = tab_ds.load_tabular_csv(
+        dataset_path, target_col=target_col, required_features=required,
+    )
+    predictions = handler.predict(features_df)
+
+    if len(predictions) != len(labels):
+        raise ValueError(
+            f"handler 返回 {len(predictions)} 条预测，与输入 {len(labels)} 行不匹配"
+        )
+
+    metrics = reg_metrics.compute_all(labels, predictions)
+    primary = "mae"
+    return metrics, primary, metrics.get(primary)
+
+
+def _eval_text_classification(
+    handler: TaskHandler,
+    dataset_path: str | Path,
+    metadata: ModelCardMetadata,
+) -> tuple[dict, str, float | None]:
+    from .datasets import text_classification as tc_ds
+
+    texts, labels = tc_ds.load_text_dataset(dataset_path)
+    predictions = handler.predict(texts)
+
+    if len(predictions) != len(texts):
+        raise ValueError(
+            f"handler 返回 {len(predictions)} 条预测，与输入 {len(texts)} 条不匹配"
+        )
+
+    top1 = []
+    for preds in predictions:
+        if not preds:
+            top1.append(None)
+            continue
+        best = max(preds, key=lambda d: d.get("score", 0))
+        top1.append(best.get("label"))
+
+    metrics = cls_metrics.compute_all(labels, top1)
+    primary = "accuracy"
+    return metrics, primary, metrics.get(primary)
+
+
+def _eval_token_classification(
+    handler: TaskHandler,
+    dataset_path: str | Path,
+    metadata: ModelCardMetadata,
+) -> tuple[dict, str, float | None]:
+    from .datasets import token_classification as ner_ds
+    from .metrics import token_classification as ner_metrics
+
+    texts, gt_spans = ner_ds.load_token_dataset(dataset_path)
+    predictions = handler.predict(texts)
+
+    if len(predictions) != len(texts):
+        raise ValueError(
+            f"handler 返回 {len(predictions)} 条预测，与输入 {len(texts)} 条不匹配"
+        )
+
+    metrics = ner_metrics.compute_all(gt_spans, predictions)
+    primary = "f1"
+    return metrics, primary, metrics.get(primary)
+
+
+def _eval_image_segmentation(
+    handler: TaskHandler,
+    dataset_path: str | Path,
+    metadata: ModelCardMetadata,
+) -> tuple[dict, str, float | None]:
+    from .datasets import image_segmentation as seg_ds
+    from .metrics import segmentation as seg_metrics
+
+    p = Path(dataset_path)
+    if p.suffix.lower() == ".zip":
+        import tempfile
+        from .datasets.image_classification import unpack_zip
+        tmp = Path(tempfile.mkdtemp(prefix="mf_eval_"))
+        root = unpack_zip(p, tmp)
+    else:
+        root = p
+
+    images, masks = seg_ds.load_segmentation_dataset(root)
+    predictions = handler.predict(images)
+
+    if len(predictions) != len(images):
+        raise ValueError(
+            f"handler 返回 {len(predictions)} 条预测，与输入 {len(images)} 张图不匹配"
+        )
+
+    metrics = seg_metrics.compute_all(masks, predictions)
+    primary = "mIoU"
+    return metrics, primary, metrics.get(primary)
+
+
 _DISPATCH = {
     "time-series-forecasting": _eval_forecasting,
     "image-classification": _eval_image_classification,
     "object-detection": _eval_object_detection,
+    "tabular-classification": _eval_tabular_classification,
+    "tabular-regression": _eval_tabular_regression,
+    "text-classification": _eval_text_classification,
+    "token-classification": _eval_token_classification,
+    "image-segmentation": _eval_image_segmentation,
 }
 
 

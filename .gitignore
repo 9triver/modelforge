@@ -9,8 +9,17 @@ build/
 dist/
 .DS_Store
 
-# demo dataset 输出，不入仓
-synthetic_load.csv
-*.zip
+# model / data artifacts
+model_store/
+*.joblib
 *.pt
+*.onnx
+*.h5
+*.pb
+
+# demo / temp outputs
+synthetic_load.csv
+metrics.json
+*.zip
 wheels/
+trial_eval_*.csv

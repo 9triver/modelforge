@@ -19,7 +19,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .. import db
@@ -104,7 +104,7 @@ def _persist_card(namespace: str, name: str, sha: str, metadata: dict) -> None:
         base_model=metadata.get("base_model"),
         best_metric_name=metric_name,
         best_metric_value=metric_value,
-        updated_at=datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        updated_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         repo_type=repo_type,
         data_format=metadata.get("data_format"),
     )

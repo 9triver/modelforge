@@ -7,28 +7,16 @@ GET  /api/v1/transfers/{id}                        查状态/结果
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
-import tempfile
-import time
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
-from .. import db, repo_reader, storage
-from ..runtime.evaluator import load_handler
-from ..runtime.transfer import (
-    TransferResult,
-    compute_data_hash,
-    generate_transfer_repo,
-    transfer_by_method,
-)
-from ..schema import validate_model_card
+from .. import db, repo_reader
+from ..services import transfer as tr_svc
+from ..services.dataset import resolve_dataset_payload
 
 router = APIRouter(prefix="/api/v1", tags=["transfers"])
-
-_WEIGHTS_CACHE: dict[int, str] = {}
 
 
 # ---------- response models ----------
@@ -58,11 +46,6 @@ class TransferStatus(BaseModel):
     duration_ms: int | None = None
     error: str | None = None
     created_at: str
-    after_value: float | None = None
-    status: str
-    duration_ms: int | None = None
-    error: str | None = None
-    created_at: str
 
 
 class SaveRequest(BaseModel):
@@ -75,192 +58,7 @@ class SaveResponse(BaseModel):
     target_revision: str
 
 
-# ---------- preview worker ----------
-
-def _run_transfer_preview(
-    transfer_id: int,
-    namespace: str,
-    name: str,
-    revision: str,
-    dataset_bytes: bytes,
-    dataset_name: str,
-    method: str,
-    hparams: dict | None = None,
-) -> None:
-    db.update_transfer(transfer_id, status="running")
-    start = time.monotonic()
-    workdir = Path(tempfile.mkdtemp(prefix="mf_transfer_"))
-
-    def _progress_cb(epoch: int, total: int, metrics: dict) -> None:
-        db.update_transfer(
-            transfer_id, status="running",
-            current_epoch=epoch, total_epochs=total,
-        )
-
-    try:
-        model_dir = workdir / "model"
-        repo_reader.checkout_to_dir(namespace, name, revision, model_dir)
-        repo_reader.materialize_lfs(model_dir)
-
-        ds_path = workdir / dataset_name
-        ds_path.write_bytes(dataset_bytes)
-
-        from ..runtime.datasets import image_classification as ic_ds
-
-        p = Path(ds_path)
-        if p.suffix.lower() == ".zip":
-            tmp_extract = workdir / "extracted"
-            root = ic_ds.unpack_zip(p, tmp_extract)
-        else:
-            root = p
-
-        images, labels = ic_ds.load_image_folder(root)
-
-        handler = load_handler(model_dir, "image-classification")
-        handler.warmup()
-
-        result = transfer_by_method(
-            method, handler, images, labels,
-            hparams=hparams,
-            progress_cb=_progress_cb if method.startswith("fine_tune") else None,
-        )
-        if result.status != "ok":
-            db.update_transfer(
-                transfer_id, status="error", error=result.error,
-                duration_ms=int((time.monotonic() - start) * 1000),
-            )
-            return
-
-        db.update_transfer(
-            transfer_id,
-            status="previewed",
-            classes_json=json.dumps(result.classes),
-            n_classes=len(result.classes),
-            n_samples=result.n_samples,
-            weights_b64=result.weights_b64 or None,
-            after_metrics_json=json.dumps(result.after_metrics),
-            primary_metric=result.primary_metric,
-            after_value=result.after_value,
-            hparams_json=json.dumps(result.hparams) if result.hparams else None,
-            duration_ms=int((time.monotonic() - start) * 1000),
-        )
-
-        # fine_tune 模式：weights_path 指向临时目录，需要保留到 save 阶段
-        # 把路径存到内存缓存（DB 不存大文件路径，save 时重新 fine_tune 或从缓存取）
-        if result.weights_path:
-            _WEIGHTS_CACHE[transfer_id] = result.weights_path
-    except Exception as e:  # noqa: BLE001
-        db.update_transfer(
-            transfer_id, status="error", error=str(e),
-            duration_ms=int((time.monotonic() - start) * 1000),
-        )
-    finally:
-        shutil.rmtree(workdir, ignore_errors=True)
-
-
-# ---------- save (fork) ----------
-
-def _do_transfer_fork(
-    transfer_id: int,
-    namespace: str,
-    name: str,
-    revision: str,
-    result_data: dict,
-    target_namespace: str,
-    target_name: str,
-) -> None:
-    db.update_transfer(transfer_id, status="saving")
-    start = time.monotonic()
-    workdir = Path(tempfile.mkdtemp(prefix="mf_tfork_"))
-
-    try:
-        # fork 时不实化 LFS — 保留指针文件，避免推送几百 MB 大文件
-        # LFS 对象已在共享 store 里，OID 相同可直接复用
-        model_dir = workdir / "model"
-        repo_reader.checkout_to_dir(namespace, name, revision, model_dir)
-
-        result = TransferResult(
-            method=result_data["method"],
-            classes=result_data["classes"],
-            n_samples=result_data.get("n_samples", 0),
-            n_holdout=result_data.get("n_holdout", 0),
-            weights_b64=result_data.get("weights_b64", "") or "",
-            weights_path=_WEIGHTS_CACHE.get(transfer_id),
-            hparams=result_data.get("hparams", {}),
-            after_metrics=result_data.get("after_metrics", {}),
-            after_value=result_data.get("after_value", 0),
-        )
-
-        source_repo = f"{namespace}/{name}"
-        target_repo = f"{target_namespace}/{target_name}"
-
-        fork_dir = workdir / "fork"
-        generate_transfer_repo(
-            source_dir=model_dir,
-            result=result,
-            source_repo=source_repo,
-            source_revision=revision,
-            target_repo=target_repo,
-            data_hash="preview",
-            dest=fork_dir,
-        )
-
-        source_repo_obj = db.get_repo(namespace, name)
-        if not db.get_repo(target_namespace, target_name):
-            try:
-                storage.create_bare_repo(target_namespace, target_name)
-            except storage.RepoStorageError:
-                pass
-            db.create_repo(
-                target_namespace, target_name,
-                owner_id=source_repo_obj.owner_id if source_repo_obj else 1,
-            )
-
-        bare = storage.repo_path(target_namespace, target_name)
-        tmp_git = workdir / "git_push"
-        subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_git)], check=True)
-        subprocess.run(["git", "-C", str(tmp_git), "config", "user.email", "modelforge@local"], check=True)
-        subprocess.run(["git", "-C", str(tmp_git), "config", "user.name", "ModelForge"], check=True)
-        for p in fork_dir.rglob("*"):
-            if p.is_file():
-                rel = p.relative_to(fork_dir)
-                dst = tmp_git / rel
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(p, dst)
-        subprocess.run(["git", "-C", str(tmp_git), "add", "-A"], check=True)
-        subprocess.run(
-            ["git", "-C", str(tmp_git), "commit", "-q", "-m",
-             f"{result.method} from {source_repo}@{revision[:8]} → {len(result.classes)} classes"],
-            check=True,
-        )
-        subprocess.run(
-            ["git", "-C", str(tmp_git), "push", "-q", str(bare), "main"],
-            check=True,
-        )
-        sha = subprocess.run(
-            ["git", "-C", str(tmp_git), "rev-parse", "HEAD"],
-            capture_output=True, text=True, check=True,
-        ).stdout.strip()
-
-        db.update_transfer(
-            transfer_id, status="ok",
-            target_repo=target_repo, target_revision=sha,
-            duration_ms=int((time.monotonic() - start) * 1000),
-        )
-    except Exception as e:  # noqa: BLE001
-        db.update_transfer(
-            transfer_id, status="error", error=f"fork failed: {e}",
-            duration_ms=int((time.monotonic() - start) * 1000),
-        )
-    finally:
-        shutil.rmtree(workdir, ignore_errors=True)
-        wp = _WEIGHTS_CACHE.pop(transfer_id, None)
-        if wp:
-            shutil.rmtree(wp, ignore_errors=True)
-
-
 # ---------- endpoints ----------
-
 
 @router.post(
     "/repos/{namespace}/{name}/transfer/preview",
@@ -296,22 +94,15 @@ async def preview_transfer(
 
     if dataset_repo:
         try:
-            ds_workdir, ds_path, _ = repo_reader.resolve_dataset_repo(dataset_repo, "main")
+            payload, ds_name = resolve_dataset_payload(dataset_repo, force_zip=True)
         except (ValueError, FileNotFoundError) as e:
             raise HTTPException(400, str(e))
-        import shutil as _shutil
-        zip_path = Path(tempfile.mktemp(suffix=".zip"))
-        _shutil.make_archive(str(zip_path).removesuffix(".zip"), "zip", str(ds_path))
-        payload = zip_path.read_bytes()
-        ds_name = zip_path.name
-        zip_path.unlink(missing_ok=True)
-        _shutil.rmtree(ds_workdir, ignore_errors=True)
     else:
         payload = await dataset.read()
         ds_name = Path(dataset.filename or "data.zip").name
 
     record = db.create_transfer(repo.id, sha, method)
-    bg.add_task(_run_transfer_preview, record.id, namespace, name, sha, payload, ds_name, method, hparams)
+    bg.add_task(tr_svc.run_transfer_preview, record.id, namespace, name, sha, payload, ds_name, method, hparams)
     return TransferCreated(transfer_id=record.id, status="queued")
 
 
@@ -327,13 +118,11 @@ async def save_transfer(transfer_id: int, body: SaveRequest, bg: BackgroundTasks
     if rec.status != "previewed":
         raise HTTPException(400, f"只有 previewed 状态可以 save（当前：{rec.status}）")
 
-    with db.connect() as c:
-        row = c.execute(
-            "SELECT namespace, name FROM repos WHERE id = ?", (rec.source_repo_id,)
-        ).fetchone()
-    if not row:
+    source_name = db.get_repo_name(rec.source_repo_id)
+    if not source_name:
         raise HTTPException(404, "Source repo not found")
 
+    ns, nm = source_name.split("/", 1)
     result_data = {
         "method": rec.method,
         "classes": json.loads(rec.classes_json) if rec.classes_json else [],
@@ -345,8 +134,8 @@ async def save_transfer(transfer_id: int, body: SaveRequest, bg: BackgroundTasks
     }
 
     bg.add_task(
-        _do_transfer_fork, transfer_id,
-        row["namespace"], row["name"], rec.source_revision,
+        tr_svc.do_transfer_fork, transfer_id,
+        ns, nm, rec.source_revision,
         result_data, body.target_namespace, body.target_name,
     )
     return SaveResponse(
@@ -361,17 +150,9 @@ def get_transfer(transfer_id: int):
     if not rec:
         raise HTTPException(404, f"Transfer {transfer_id} not found")
 
-    source_name = "<deleted>"
-    with db.connect() as c:
-        row = c.execute(
-            "SELECT namespace, name FROM repos WHERE id = ?", (rec.source_repo_id,)
-        ).fetchone()
-        if row:
-            source_name = f"{row['namespace']}/{row['name']}"
-
     return TransferStatus(
         id=rec.id,
-        source_repo=source_name,
+        source_repo=db.get_repo_name(rec.source_repo_id) or "<deleted>",
         source_revision=rec.source_revision,
         target_repo=rec.target_repo,
         target_revision=rec.target_revision,
