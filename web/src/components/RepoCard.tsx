@@ -3,18 +3,26 @@ import type { SearchResult } from '../lib/types';
 
 export default function RepoCard({ repo }: { repo: SearchResult }) {
   const isDataset = repo.repo_type === 'dataset';
+  const isSpace = repo.repo_type === 'space';
+  const borderClass = isSpace
+    ? 'border-teal-200 hover:border-teal-400'
+    : isDataset
+    ? 'border-purple-200 hover:border-purple-400'
+    : 'border-gray-200 hover:border-blue-400';
+
   return (
     <Link
       to={`/${repo.namespace}/${repo.name}`}
-      className={`block bg-white rounded-lg border p-4 hover:shadow-sm transition ${
-        isDataset ? 'border-purple-200 hover:border-purple-400' : 'border-gray-200 hover:border-blue-400'
-      }`}
+      className={`block bg-white rounded-lg border p-4 hover:shadow-sm transition ${borderClass}`}
     >
       <div className="flex items-center justify-between mb-2">
         <div className="font-mono text-base font-semibold text-gray-900">
           {repo.namespace}<span className="text-gray-400">/</span>{repo.name}
         </div>
         <div className="flex items-center gap-1.5">
+          {isSpace && (
+            <span className="text-xs px-2 py-0.5 bg-teal-50 text-teal-700 rounded font-medium">Space</span>
+          )}
           {isDataset && (
             <span className="text-xs px-2 py-0.5 bg-purple-50 text-purple-700 rounded font-medium">Dataset</span>
           )}
@@ -27,10 +35,10 @@ export default function RepoCard({ repo }: { repo: SearchResult }) {
         {isDataset && repo.data_format && (
           <span className="text-xs px-2 py-0.5 bg-purple-50 text-purple-700 rounded">{repo.data_format}</span>
         )}
-        {!isDataset && repo.library_name && (
+        {!isDataset && !isSpace && repo.library_name && (
           <span className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 rounded">{repo.library_name}</span>
         )}
-        {repo.pipeline_tag && (
+        {!isSpace && repo.pipeline_tag && (
           <span className="text-xs px-2 py-0.5 bg-green-50 text-green-700 rounded">{repo.pipeline_tag}</span>
         )}
         {repo.tags.slice(0, 4).map((t) => (
@@ -40,7 +48,7 @@ export default function RepoCard({ repo }: { repo: SearchResult }) {
           <span className="text-xs px-2 py-0.5 text-gray-400">+{repo.tags.length - 4}</span>
         )}
       </div>
-      {repo.best_metric_name && repo.best_metric_value !== null && (
+      {!isSpace && repo.best_metric_name && repo.best_metric_value !== null && (
         <div className="text-xs text-gray-500">
           {repo.best_metric_name}: <span className="font-mono text-gray-800">{repo.best_metric_value}</span>
         </div>

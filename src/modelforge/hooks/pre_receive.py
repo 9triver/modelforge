@@ -54,9 +54,12 @@ def _validate_ref(repo_dir: Path, new_sha: str, ref: str) -> tuple[list[str], di
             "每个 ModelForge 仓库的根目录必须有 README.md 作为 Model Card。",
         ], None)
 
+    metadata, _body = parse_frontmatter(readme)
+    if metadata.get("repo_type") == "space":
+        return ([], metadata)
+
     try:
         validate_model_card(readme)
-        metadata, _body = parse_frontmatter(readme)
         return ([], metadata)
     except ModelCardError as e:
         return ([f"[{ref}]"] + str(e).split("\n"), None)

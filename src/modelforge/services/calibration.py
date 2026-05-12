@@ -14,7 +14,7 @@ from ..runtime.calibration import (
     generate_calibrated_repo,
 )
 from ..schema import validate_model_card
-from .workspace import model_workspace
+from .sandbox import model_sandbox
 
 
 def run_preview(
@@ -31,7 +31,7 @@ def run_preview(
     start = time.monotonic()
 
     try:
-        with model_workspace(namespace, name, revision, prefix="mf_cal_") as (workdir, model_dir):
+        with model_sandbox(namespace, name, revision, prefix="mf_cal_") as (workdir, model_dir):
             readme = (model_dir / "README.md").read_text(encoding="utf-8")
             metadata = validate_model_card(readme)
             fc_cfg = (metadata.model_extra or {}).get("forecasting", {})
@@ -89,7 +89,7 @@ def do_fork(
     start = time.monotonic()
 
     try:
-        with model_workspace(namespace, name, revision, with_lfs=False, prefix="mf_fork_") as (workdir, model_dir):
+        with model_sandbox(namespace, name, revision, with_lfs=False, prefix="mf_fork_") as (workdir, model_dir):
             result = CalibrationResult(
                 params=params,
                 before_metrics=before_metrics,

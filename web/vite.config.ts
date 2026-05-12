@@ -14,6 +14,7 @@ export default defineConfig({
       '/api': 'http://127.0.0.1:8765',
       '/healthz': 'http://127.0.0.1:8765',
       '/version': 'http://127.0.0.1:8765',
+      '/workspaces': { target: 'http://127.0.0.1:8765', ws: true },
     },
   },
 });

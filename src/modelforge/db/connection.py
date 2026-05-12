@@ -116,6 +116,20 @@ CREATE TABLE IF NOT EXISTS transfers (
     FOREIGN KEY (source_repo_id) REFERENCES repos(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_transfer_source ON transfers(source_repo_id);
+
+CREATE TABLE IF NOT EXISTS workspaces (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo_id         INTEGER NOT NULL,
+    container_id    TEXT,
+    container_name  TEXT NOT NULL,
+    port            INTEGER,
+    status          TEXT NOT NULL,
+    error           TEXT,
+    created_at      TEXT NOT NULL,
+    FOREIGN KEY (repo_id) REFERENCES repos(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_ws_status ON workspaces(status);
+CREATE INDEX IF NOT EXISTS idx_ws_repo ON workspaces(repo_id);
 """
 
 

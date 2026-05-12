@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     docker_timeout: int = 300
     docker_gpu: bool = False
 
+    # Workspace (code-server)
+    workspace_image: str = "docker.1ms.run/codercom/code-server:latest"
+    workspace_memory: str = "4g"
+    workspace_cpus: int = 2
+    workspace_port_start: int = 10000
+    workspace_port_end: int = 10100
+
     # ===== 派生路径（基于 data_dir）=====
     @property
     def repos_dir(self) -> Path:
@@ -48,8 +55,12 @@ class Settings(BaseSettings):
     def db_path(self) -> Path:
         return self.data_dir / "modelforge.db"
 
+    @property
+    def workspaces_dir(self) -> Path:
+        return self.data_dir / "workspaces"
+
     def ensure_dirs(self) -> None:
-        for p in (self.data_dir, self.repos_dir, self.lfs_dir):
+        for p in (self.data_dir, self.repos_dir, self.lfs_dir, self.workspaces_dir):
             p.mkdir(parents=True, exist_ok=True)
 
 

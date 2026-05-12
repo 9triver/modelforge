@@ -148,6 +148,17 @@ export interface CocoCategory {
   count: number;
 }
 
+export interface WorkspaceRecord {
+  id: number;
+  repo: string;
+  models: string[];
+  datasets: string[];
+  status: 'creating' | 'running' | 'stopping' | 'stopped' | 'error';
+  url: string | null;
+  error: string | null;
+  created_at: string;
+}
+
 export interface CocoPreview {
   total_images: number;
   total_annotations: number;

@@ -15,13 +15,13 @@ from ..runtime.transfer import (
     generate_transfer_repo,
     transfer_by_method,
 )
-from .workspace import model_workspace
+from .sandbox import model_sandbox
 
 _WEIGHTS_CACHE: dict[int, str] = {}
 
 
 def _persist_weights(src_path: str) -> str:
-    """将 workspace 内的权重文件复制到独立临时目录，避免 workspace 清理后丢失。"""
+    """将沙盒内的权重文件复制到独立临时目录，避免沙盒清理后丢失。"""
     persist_dir = tempfile.mkdtemp(prefix="mf_weights_")
     src = Path(src_path)
     dst = Path(persist_dir) / src.name
@@ -49,7 +49,7 @@ def run_transfer_preview(
         )
 
     try:
-        with model_workspace(namespace, name, revision, prefix="mf_transfer_") as (workdir, model_dir):
+        with model_sandbox(namespace, name, revision, prefix="mf_transfer_") as (workdir, model_dir):
             ds_path = workdir / dataset_name
             ds_path.write_bytes(dataset_bytes)
 
@@ -115,7 +115,7 @@ def do_transfer_fork(
     start = time.monotonic()
 
     try:
-        with model_workspace(namespace, name, revision, with_lfs=False, prefix="mf_tfork_") as (workdir, model_dir):
+        with model_sandbox(namespace, name, revision, with_lfs=False, prefix="mf_tfork_") as (workdir, model_dir):
             result = TransferResult(
                 method=result_data["method"],
                 classes=result_data["classes"],

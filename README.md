@@ -6,10 +6,14 @@
 
 - **Git Smart HTTP**：原生 `git push / git clone`，任意 Git 客户端均可使用
 - **Git-LFS**：大文件（权重、数据集）自动分片存储，版本可追溯
+- **三种仓库类型**：Model（模型）、Dataset（数据集）、Space（交互式工作区），统一管理
 - **Model Card 校验**：push 时服务端 hook 自动验证 README.md 的 YAML frontmatter（HF 规范兼容）
-- **Web UI**：浏览器查看模型列表、元数据、性能指标、文件清单（含下载）、渲染后的 README
+- **Web UI**：浏览器查看仓库列表（按 type/library/task 筛选）、元数据、性能指标、文件清单、渲染后的 README
 - **Evaluation-as-a-Service**：上传数据 → 平台跑模型 → 返回标准指标（MAPE/accuracy/mAP 等）
 - **多方法校准**：评估不达标 → 预览 linear_bias / segmented / stacking 三种校准效果 → 选最好的 fork 新仓库
+- **迁移学习**：linear_probe / fine_tune / full_retrain，自动保存新模型到目标仓库
+- **Workspace（Space）**：基于 code-server 的在线 IDE，模型/数据集以 git submodule 挂载，停止时自动保存
+- **数据集预览**：CSV 表格预览、ImageFolder 缩略图、COCO JSON 标注叠加可视化
 - **Python SDK**：`modelforge.load("ns/name")` 一行加载模型；`hub.upload_folder()` 上传
 - **CLI**：`modelforge serve / run / user / token / repo` 命令行管理
 
@@ -18,8 +22,8 @@
 | Task | Handler | 评估指标 | 校准 |
 |---|---|---|---|
 | `time-series-forecasting` | ForecastingHandler | MAPE/RMSE/MAE/sMAPE | ✅ linear_bias / segmented / stacking |
-| `image-classification` | ImageClassificationHandler | accuracy/precision/recall/F1 | 🔜 linear probe |
-| `object-detection` | ObjectDetectionHandler | mAP/mAP_50/mAP_75/mAR | 🔜 fine-tune 检测头 |
+| `image-classification` | ImageClassificationHandler | accuracy/precision/recall/F1 | ✅ linear_probe / fine_tune / full_retrain |
+| `object-detection` | ObjectDetectionHandler | mAP/mAP_50/mAP_75/mAR | ✅ fine_tune / full_retrain |
 
 ## 快速开始
 
@@ -233,15 +237,21 @@ frontmatter 必填字段：`license`、`library_name`、`tags`（至少一个）
 
 ```
 {data_dir}/
-├── modelforge.db           SQLite：用户 / Token / 仓库注册表
+├── modelforge.db           SQLite：用户 / Token / 仓库 / 评估 / 校准 / 迁移 / Workspace
 ├── repos/
-│   ├── my-model.git/       裸 Git 仓库（含 hooks/pre-receive）
+│   ├── {namespace}/
+│   │   ├── my-model.git/       模型裸仓库（含 hooks/pre-receive）
+│   │   ├── my-dataset.git/     数据集裸仓库
+│   │   └── my-space.git/       Space 裸仓库（含 .gitmodules 引用模型/数据集子模块）
 │   └── ...
-└── lfs/
-    └── ab/cd/abcd...       LFS 物件（按 SHA256 两级目录分片）
+├── lfs/
+│   └── ab/cd/abcd...       LFS 物件（按 SHA256 两级目录分片）
+└── workspaces/
+    └── {id}/
+        └── space/           Space 工作目录（含 models/ datasets/ 子模块）
 ```
 
-模型文件的版本历史在裸 Git 仓库里，大文件内容在 LFS 物件池里，两者通过 LFS 指针文件关联。
+模型文件的版本历史在裸 Git 仓库里，大文件内容在 LFS 物件池里，两者通过 LFS 指针文件关联。Space 仓库通过 git submodule 引用模型和数据集仓库，版本锁定。
 
 ## 项目结构
 
@@ -250,7 +260,7 @@ src/modelforge/
 ├── __init__.py             顶层 API（load()）
 ├── loader.py               modelforge.load() 实现
 ├── config.py               配置（data_dir / host / port / git 路径）
-├── db.py                   SQLite 持久层（users / tokens / repos / evaluations / calibrations）
+├── db/                     SQLite 持久层（repos / repo_cards / evaluations / calibrations / transfers / workspaces）
 ├── auth.py                 Bearer Token + Basic Auth 认证
 ├── storage.py              裸仓库创建、pre-receive hook 安装
 ├── lfs_store.py            LFS 物件读写（SHA256 校验）
@@ -264,9 +274,17 @@ src/modelforge/
 │   ├── preview.py          Web UI 预览 API（model card / files / refs / facets）
 │   ├── evaluations.py      评估 API（upload → evaluate → metrics）
 │   ├── calibrations.py     校准 API（preview → compare → save fork）
+│   ├── transfers.py        迁移学习 API（linear_probe / fine_tune / full_retrain）
+│   ├── workspaces.py       Workspace API（创建 / 停止 / 重启 + 反向代理到 code-server）
 │   ├── download.py         单文件下载（普通 + LFS 流式）
 │   ├── git_routes.py       Git Smart HTTP（git-http-backend 代理）
 │   └── lfs_routes.py       Git-LFS Batch API
+├── services/
+│   ├── evaluation.py       评估编排
+│   ├── calibration.py      校准编排
+│   ├── transfer.py         迁移学习编排
+│   ├── workspace.py        Workspace 生命周期（子模块初始化 / 容器启停 / 自动保存）
+│   └── sandbox.py          Docker 沙箱执行
 ├── runtime/
 │   ├── tasks/              TaskHandler 基类 + forecasting / image-classification / object-detection
 │   ├── datasets/           标准数据 loader（CSV / ImageFolder / COCO JSON）
@@ -274,12 +292,11 @@ src/modelforge/
 │   ├── evaluator.py        handler 动态加载 + 评估分发
 │   └── calibration.py      三种校准方法 + handler template 生成 + fork 仓库组装
 ├── hooks/
-│   └── pre_receive.py      push 时 Model Card 校验
+│   └── pre_receive.py      push 时 Model Card 校验（Space 仓库跳过）
 └── static/                 Vite + React 前端构建产物
 
-web/                        前端源码（Vite + React + Tailwind）
+web/                        前端源码（Vite + React + TypeScript + Tailwind）
 examples/                   demo 素材（chronos / vit-cats-dogs / yolov8n）
-deploy/                     systemd service + CI/CD workflow
 ```
 
 ## 依赖
@@ -287,8 +304,10 @@ deploy/                     systemd service + CI/CD workflow
 - Python ≥ 3.10
 - Git（系统级，含 `git-http-backend`）
 - `git-lfs`（客户端推送大文件时需要）
+- Docker（Workspace / code-server 容器需要）
 
 ```
 fastapi  uvicorn  pydantic  pydantic-settings
 typer  rich  pyyaml  httpx  jinja2  markdown-it-py
+websockets  (Workspace WebSocket 代理)
 ```

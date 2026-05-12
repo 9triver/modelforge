@@ -106,3 +106,15 @@ class Transfer:
     duration_ms: int | None
     error: str | None
     created_at: str
+
+
+@dataclass
+class Workspace:
+    id: int
+    repo_id: int
+    container_id: str | None
+    container_name: str
+    port: int | None
+    status: str
+    error: str | None
+    created_at: str

@@ -8,10 +8,12 @@ import EvaluateTab from '../components/EvaluateTab';
 import FileList from '../components/FileList';
 import ModelIndexTable from '../components/ModelIndexTable';
 import PerformanceBadge from '../components/PerformanceBadge';
+import SpaceControls from '../components/SpaceControls';
 import TransferTab from '../components/TransferTab';
 import UseModelSnippet from '../components/UseModelSnippet';
+import WorkspaceTab from '../components/WorkspaceTab';
 
-type Tab = 'card' | 'files' | 'evaluate' | 'calibrate' | 'transfer' | 'data-preview';
+type Tab = 'card' | 'files' | 'evaluate' | 'calibrate' | 'transfer' | 'workspace' | 'data-preview';
 
 export default function RepoPage() {
   const { namespace = '', name = '' } = useParams();
@@ -22,6 +24,7 @@ export default function RepoPage() {
     tabParam === 'evaluate' ? 'evaluate' :
     tabParam === 'calibrate' ? 'calibrate' :
     tabParam === 'transfer' ? 'transfer' :
+    tabParam === 'workspace' ? 'workspace' :
     tabParam === 'data-preview' ? 'data-preview' :
     'card';
   const revision = searchParams.get('revision') || 'main';
@@ -59,10 +62,17 @@ export default function RepoPage() {
 
   const meta = preview.metadata || {};
   const isDataset = meta.repo_type === 'dataset';
+  const isSpace = meta.repo_type === 'space';
   const gitUrl = `${window.location.protocol}//${window.location.host}/${preview.full_name}.git`;
   const setTab = (t: Tab) => setSearchParams({ tab: t, revision });
 
-  const tabs: { id: Tab; label: string }[] = isDataset
+  const tabs: { id: Tab; label: string }[] = isSpace
+    ? [
+        { id: 'card', label: 'Space Card' },
+        { id: 'files', label: `Files (${preview.files.length})` },
+        { id: 'workspace', label: 'Workspace' },
+      ]
+    : isDataset
     ? [
         { id: 'card', label: 'Dataset Card' },
         { id: 'files', label: `Files (${preview.files.length})` },
@@ -74,6 +84,7 @@ export default function RepoPage() {
         { id: 'evaluate', label: 'Evaluate' },
         { id: 'calibrate', label: 'Calibrate' },
         { id: 'transfer', label: 'Transfer' },
+        { id: 'workspace', label: 'Workspace' },
       ];
 
   return (
@@ -107,14 +118,16 @@ export default function RepoPage() {
 
         {tab === 'card' && (
           <div>
-            {agg && <PerformanceBadge agg={agg} />}
-            <UseModelSnippet fullName={preview.full_name} task={meta.pipeline_tag || null} />
+            {!isSpace && agg && <PerformanceBadge agg={agg} />}
+            {!isSpace && !isDataset && (
+              <UseModelSnippet fullName={preview.full_name} task={meta.pipeline_tag || null} />
+            )}
             {preview.body_error && (
               <div className="bg-yellow-50 text-yellow-800 p-3 rounded mb-4 whitespace-pre-wrap text-sm">
                 {preview.body_error}
               </div>
             )}
-            {preview.model_index.length > 0 && (
+            {!isSpace && preview.model_index.length > 0 && (
               <>
                 <h2 className="text-lg font-semibold mt-2 mb-2">Reported metrics (model_card)</h2>
                 <ModelIndexTable rows={preview.model_index} />
@@ -170,6 +183,14 @@ export default function RepoPage() {
           />
         )}
 
+        {tab === 'workspace' && isSpace && (
+          <SpaceControls namespace={namespace} name={name} />
+        )}
+
+        {tab === 'workspace' && !isSpace && (
+          <WorkspaceTab namespace={namespace} name={name} />
+        )}
+
         {tab === 'data-preview' && (
           <DataPreviewTab
             namespace={namespace}
@@ -187,14 +208,15 @@ export default function RepoPage() {
           <code className="block text-xs bg-gray-50 p-2 rounded break-all">git clone {gitUrl}</code>
         </div>
 
-        {(meta.license || meta.library_name || meta.pipeline_tag || meta.data_format) && (
+        {(isSpace || meta.license || meta.library_name || meta.pipeline_tag || meta.data_format) && (
           <div className="bg-white border border-gray-200 rounded p-4 space-y-2">
+            {isSpace && <div><span className="text-gray-500">Type:</span> <span className="font-medium text-teal-700">Space</span></div>}
             {isDataset && <div><span className="text-gray-500">Type:</span> <span className="font-medium text-purple-700">Dataset</span></div>}
             {isDataset && meta.data_format && <div><span className="text-gray-500">Format:</span> <span className="font-medium">{meta.data_format}</span></div>}
-            {!isDataset && meta.library_name && <div><span className="text-gray-500">Library:</span> <span className="font-medium">{meta.library_name}</span></div>}
-            {meta.pipeline_tag && <div><span className="text-gray-500">Task:</span> <span className="font-medium">{meta.pipeline_tag}</span></div>}
+            {!isDataset && !isSpace && meta.library_name && <div><span className="text-gray-500">Library:</span> <span className="font-medium">{meta.library_name}</span></div>}
+            {!isSpace && meta.pipeline_tag && <div><span className="text-gray-500">Task:</span> <span className="font-medium">{meta.pipeline_tag}</span></div>}
             {meta.license && <div><span className="text-gray-500">License:</span> <span className="font-medium">{meta.license}</span></div>}
-            {meta.base_model && <div><span className="text-gray-500">Base:</span> <span className="font-mono text-xs">{meta.base_model}</span></div>}
+            {!isSpace && meta.base_model && <div><span className="text-gray-500">Base:</span> <span className="font-mono text-xs">{meta.base_model}</span></div>}
           </div>
         )}
 

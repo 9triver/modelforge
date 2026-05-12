@@ -48,19 +48,25 @@ function Section({ title, options, value, onChange }: {
 
 export default function FacetFilter({ facets, library, task, tag, maxMape, repoType, dataFormat, onChange }: Props) {
   const isDataset = repoType === 'dataset';
+  const isSpace = repoType === 'space';
+  const isModel = !isDataset && !isSpace;
   return (
     <aside className="w-56 shrink-0">
       <div className="sticky top-4">
-        <Section title="Type" options={['model', 'dataset']} value={repoType} onChange={(v) => onChange({ repoType: v })} />
-        {!isDataset && (
+        <Section title="Type" options={['model', 'dataset', 'space']} value={repoType} onChange={(v) => onChange({ repoType: v })} />
+        {isModel && (
           <Section title="Library" options={facets.libraries} value={library} onChange={(v) => onChange({ library: v })} />
         )}
         {isDataset && facets.data_formats.length > 0 && (
           <Section title="Data Format" options={facets.data_formats} value={dataFormat} onChange={(v) => onChange({ dataFormat: v })} />
         )}
-        <Section title="Task" options={facets.tasks} value={task} onChange={(v) => onChange({ task: v })} />
-        <Section title="Tags" options={facets.tags} value={tag} onChange={(v) => onChange({ tag: v })} />
-        {!isDataset && (
+        {!isSpace && (
+          <Section title="Task" options={facets.tasks} value={task} onChange={(v) => onChange({ task: v })} />
+        )}
+        {!isSpace && (
+          <Section title="Tags" options={facets.tags} value={tag} onChange={(v) => onChange({ tag: v })} />
+        )}
+        {isModel && (
           <div className="mb-4">
             <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Max MAPE</div>
             <input

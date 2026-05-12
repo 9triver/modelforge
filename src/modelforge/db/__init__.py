@@ -19,16 +19,24 @@ from .models import (
     Token,
     Transfer,
     User,
+    Workspace,
 )
 from .repo_cards import get_repo_card, search_repos, upsert_repo_card
-from .repos import create_repo, delete_repo, get_repo, get_repo_name, list_repos
+from .repos import create_repo, delete_repo, get_repo, get_repo_by_id, get_repo_name, list_repos
 from .tokens import create_token, get_token, revoke_token
 from .transfers import create_transfer, get_transfer, update_transfer
 from .users import create_user, get_user_by_id, get_user_by_name, list_users
+from .workspaces import (
+    create_workspace,
+    get_workspace,
+    get_workspace_by_repo,
+    list_workspaces,
+    update_workspace,
+)
 
 __all__ = [
     # models
-    "User", "Token", "Repo", "RepoCard", "Evaluation", "Calibration", "Transfer",
+    "User", "Token", "Repo", "RepoCard", "Evaluation", "Calibration", "Transfer", "Workspace",
     # connection
     "connect",
     # users
@@ -36,7 +44,7 @@ __all__ = [
     # tokens
     "create_token", "get_token", "revoke_token",
     # repos
-    "create_repo", "get_repo", "get_repo_name", "list_repos", "delete_repo",
+    "create_repo", "get_repo", "get_repo_by_id", "get_repo_name", "list_repos", "delete_repo",
     # repo_cards
     "upsert_repo_card", "get_repo_card", "search_repos",
     # evaluations
@@ -45,4 +53,7 @@ __all__ = [
     "create_calibration", "update_calibration", "get_calibration",
     # transfers
     "create_transfer", "update_transfer", "get_transfer",
+    # workspaces
+    "create_workspace", "update_workspace", "get_workspace",
+    "get_workspace_by_repo", "list_workspaces",
 ]

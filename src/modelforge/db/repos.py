@@ -34,6 +34,14 @@ def get_repo(namespace: str, name: str) -> Repo | None:
         return _row_to_repo(row) if row else None
 
 
+def get_repo_by_id(repo_id: int) -> Repo | None:
+    with connect() as c:
+        row = c.execute(
+            "SELECT * FROM repos WHERE id = ?", (repo_id,)
+        ).fetchone()
+        return _row_to_repo(row) if row else None
+
+
 def list_repos() -> list[Repo]:
     with connect() as c:
         rows = c.execute("SELECT * FROM repos ORDER BY namespace, name").fetchall()

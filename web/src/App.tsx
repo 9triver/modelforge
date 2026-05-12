@@ -1,6 +1,7 @@
 import { Link, Route, Routes } from 'react-router-dom';
 import HomePage from './pages/HomePage';
 import RepoPage from './pages/RepoPage';
+import WorkspacesPage from './pages/WorkspacesPage';
 
 function NavBar() {
   return (
@@ -25,6 +26,7 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-4 py-6">
         <Routes>
           <Route path="/" element={<HomePage />} />
+          <Route path="/workspaces" element={<WorkspacesPage />} />
           <Route path="/:namespace/:name" element={<RepoPage />} />
           <Route path="*" element={<div className="text-center py-20 text-gray-500">404 Not Found</div>} />
         </Routes>

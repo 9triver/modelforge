@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .. import db, repo_reader
 from ..schema import ModelCardError, ModelCardMetadata, validate_model_card
-from .workspace import model_workspace
+from .sandbox import model_sandbox
 
 
 def read_metadata(
@@ -39,7 +39,7 @@ def run_evaluation(
     db.update_evaluation(eval_id, status="running")
 
     try:
-        with model_workspace(namespace, name, revision, prefix="mf_eval_") as (workdir, model_dir):
+        with model_sandbox(namespace, name, revision, prefix="mf_eval_") as (workdir, model_dir):
             ds_path = workdir / dataset_name
             ds_path.write_bytes(dataset_bytes)
 

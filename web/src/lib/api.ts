@@ -10,6 +10,7 @@ import type {
   RepoSummary,
   SearchResult,
   TransferRecord,
+  WorkspaceRecord,
 } from './types';
 
 async function getJSON<T>(url: string): Promise<T> {
@@ -218,4 +219,52 @@ export function getCocoPreview(
 ): Promise<CocoPreview> {
   const qs = new URLSearchParams({ revision, limit: String(limit) });
   return getJSON(`/api/v1/repos/${namespace}/${name}/preview-coco?${qs}`);
+}
+
+// ---------- Workspaces ----------
+
+export async function createWorkspace(req: {
+  namespace: string;
+  name: string;
+  models: string[];
+  datasets: string[];
+}): Promise<{ workspace_id: number; status: string }> {
+  const res = await fetch('/api/v1/workspaces', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`${res.status} ${res.statusText}: ${body}`);
+  }
+  return res.json();
+}
+
+export function getWorkspace(id: number): Promise<WorkspaceRecord> {
+  return getJSON(`/api/v1/workspaces/${id}`);
+}
+
+export function listWorkspaces(): Promise<WorkspaceRecord[]> {
+  return getJSON('/api/v1/workspaces');
+}
+
+export function getWorkspaceByRepo(namespace: string, name: string): Promise<WorkspaceRecord[]> {
+  return getJSON(`/api/v1/workspaces?repo=${encodeURIComponent(namespace + '/' + name)}`);
+}
+
+export async function stopWorkspace(id: number): Promise<void> {
+  const res = await fetch(`/api/v1/workspaces/${id}/stop`, { method: 'POST' });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`${res.status} ${res.statusText}: ${body}`);
+  }
+}
+
+export async function restartWorkspace(id: number): Promise<void> {
+  const res = await fetch(`/api/v1/workspaces/${id}/restart`, { method: 'POST' });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`${res.status} ${res.statusText}: ${body}`);
+  }
 }
